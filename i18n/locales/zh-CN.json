@@ -3,6 +3,7 @@
     "error": "错误",
     "cancel": "取消",
     "confirm": "确认",
+    "actions": "操作",
     "save": "保存",
     "success": "成功",
     "site_name": "GeeMC",
@@ -188,5 +189,99 @@
     "forum": "论坛",
     "wiki": "Wiki",
     "logout_toast": "已退出"
+  },
+  "admin": {
+    "nav_link": "管理",
+    "panel_title": "管理后台",
+    "mobile_menu_title": "管理菜单",
+    "dashboard": "仪表盘",
+    "dashboard_subtitle": "用户、用户组与系统概况。",
+    "users": "用户",
+    "groups": "用户组",
+    "back_to_home": "返回用户侧",
+    "activity": {
+      "recent_desc": "按注册时间排序的最近用户。",
+      "recent": "最近动态",
+      "new_user": "新成员",
+      "joined": "{name} 加入了 GeeMC",
+      "no_recent": "暂无最近动态",
+      "time_just_now": "刚刚",
+      "time_minutes_ago": "{n} 分钟前",
+      "time_hours_ago": "{n} 小时前"
+    },
+    "stats": {
+      "total_users": "用户总数",
+      "from_last_month": "本月新增",
+      "user_groups": "用户组",
+      "groups_desc": "数据库中的权限组数量",
+      "active_sessions": "有效会话",
+      "sessions_desc": "尚未过期的登录会话",
+      "system_load": "系统负载",
+      "high": "较高",
+      "normal": "正常",
+      "load_label": "平均负载（1 / 5 / 15 分钟）",
+      "stable": "稳定"
+    },
+    "system": {
+      "title": "系统",
+      "desc": "运行环境与数据库",
+      "orm": "ORM",
+      "db": "数据库",
+      "env": "环境"
+    },
+    "users_page": {
+      "title": "用户管理",
+      "subtitle": "管理注册用户及其权限",
+      "add_user": "添加用户",
+      "add_user_todo": "添加用户功能即将上线",
+      "search_placeholder": "用户名",
+      "display": "显示列",
+      "loading": "加载中…",
+      "col_user": "用户",
+      "col_groups": "用户组",
+      "col_joined": "注册时间",
+      "col_gee": "Gee ID",
+      "gee_yes": "已绑定",
+      "gee_no": "—",
+      "empty": "暂无用户。"
+    }
+  },
+  "AdminUsers": {
+    "display": "显示列",
+    "rowsSelected": "已选中 {selected} / {total} 行",
+    "id": "ID"
+  },
+  "AdminGroups": {
+    "title": "用户组管理",
+    "description": "管理用户组及其权限",
+    "addGroup": "新增用户组",
+    "editGroup": "编辑用户组",
+    "deleteGroup": "删除用户组",
+    "groupName": "组名",
+    "groupDesc": "描述",
+    "members": "成员数",
+    "systemDefault": "系统默认",
+    "deleteConfirmTitle": "删除用户组",
+    "deleteConfirmDesc": "确定要删除此用户组吗？此操作无法撤销。",
+    "deleteSuccess": "用户组删除成功",
+    "deleteError": "删除用户组失败",
+    "createSuccess": "用户组创建成功",
+    "updateSuccess": "用户组更新成功",
+    "nameRequired": "组名不能为空",
+    "cannotDeleteDefault": "无法删除系统默认用户组",
+    "slug": "标识符",
+    "slugLockedDesc": "系统默认用户组的标识符已锁定。",
+    "slugFormatDesc": "仅允许小写字母、数字和下划线。",
+    "slugPlaceholder": "例如 registered_user",
+    "permissions": "权限",
+    "superAdminPermDesc": "超级管理员始终拥有所有权限。",
+    "permNotGrantable": "你没有此权限，无法授予",
+    "operationFailed": "操作失败",
+    "permLabels": {
+      "geemc": {
+        "publish": "发布内容",
+        "admin": "访问管理后台"
+      }
+    }
   }
 }

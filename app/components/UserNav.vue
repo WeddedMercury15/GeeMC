@@ -20,6 +20,8 @@ const { data: meData } = await useFetch<{ user: AuthUser | null }>('/api/auth/me
 
 const user = computed(() => meData.value?.user ?? auth.user.value ?? null)
 
+const canAdmin = computed(() => user.value?.permissions?.includes('geemc.admin') ?? false)
+
 const isLogoutModalOpen = ref(false)
 const isLoggingOut = ref(false)
 
@@ -132,7 +134,16 @@ const userMenuItems = computed<DropdownMenuItem[][]>(() => {
         label: t('layout.nav.profile'),
         icon: 'i-lucide-user',
         to: localePath('/profile')
-      }
+      },
+      ...(canAdmin.value
+        ? [
+            {
+              label: t('admin.panel_title'),
+              icon: 'i-lucide-layout-dashboard',
+              to: localePath('/admin')
+            }
+          ]
+        : [])
     ],
     localeAndAppearanceRow.value,
     [

@@ -3,6 +3,7 @@
     "error": "Error",
     "cancel": "Cancel",
     "confirm": "Confirm",
+    "actions": "Actions",
     "save": "Save",
     "success": "Success",
     "site_name": "GeeMC",
@@ -188,5 +189,99 @@
     "forum": "Forum",
     "wiki": "Wiki",
     "logout_toast": "Signed out"
+  },
+  "admin": {
+    "nav_link": "Admin",
+    "panel_title": "Admin Panel",
+    "mobile_menu_title": "Admin menu",
+    "dashboard": "Dashboard",
+    "dashboard_subtitle": "Overview of users, groups, and system health.",
+    "users": "Users",
+    "groups": "Groups",
+    "back_to_home": "Back to user side",
+    "activity": {
+      "recent_desc": "Latest sign-ups shown in chronological order.",
+      "recent": "Recent activity",
+      "new_user": "New member",
+      "joined": "{name} joined GeeMC",
+      "no_recent": "No recent activity",
+      "time_just_now": "Just now",
+      "time_minutes_ago": "{n}m ago",
+      "time_hours_ago": "{n}h ago"
+    },
+    "stats": {
+      "total_users": "Total users",
+      "from_last_month": "new this month",
+      "user_groups": "User groups",
+      "groups_desc": "Permission groups in the database",
+      "active_sessions": "Active sessions",
+      "sessions_desc": "Sessions not yet expired",
+      "system_load": "System load",
+      "high": "High",
+      "normal": "Normal",
+      "load_label": "Load avg (1 / 5 / 15 min)",
+      "stable": "Stable"
+    },
+    "system": {
+      "title": "System",
+      "desc": "Runtime and database",
+      "orm": "ORM",
+      "db": "Database",
+      "env": "Environment"
+    },
+    "users_page": {
+      "title": "User Management",
+      "subtitle": "Manage registered users and their permissions",
+      "add_user": "Add user",
+      "add_user_todo": "Add user will be available soon",
+      "search_placeholder": "Username",
+      "display": "Display",
+      "loading": "Loading…",
+      "col_user": "User",
+      "col_groups": "Groups",
+      "col_joined": "Joined",
+      "col_gee": "Gee ID",
+      "gee_yes": "Linked",
+      "gee_no": "—",
+      "empty": "No users yet."
+    }
+  },
+  "AdminUsers": {
+    "display": "Display",
+    "rowsSelected": "Selected {selected} / {total} rows",
+    "id": "ID"
+  },
+  "AdminGroups": {
+    "title": "User Groups",
+    "description": "Manage user groups and their permissions",
+    "addGroup": "Add Group",
+    "editGroup": "Edit Group",
+    "deleteGroup": "Delete Group",
+    "groupName": "Group Name",
+    "groupDesc": "Description",
+    "members": "Members",
+    "systemDefault": "System Default",
+    "deleteConfirmTitle": "Delete Group",
+    "deleteConfirmDesc": "Are you sure you want to delete this group? This action cannot be undone.",
+    "deleteSuccess": "Group deleted successfully",
+    "deleteError": "Failed to delete group",
+    "createSuccess": "Group created successfully",
+    "updateSuccess": "Group updated successfully",
+    "nameRequired": "Group name is required",
+    "cannotDeleteDefault": "Cannot delete system default group",
+    "slug": "Slug",
+    "slugLockedDesc": "System default group slug is locked.",
+    "slugFormatDesc": "Only lowercase letters, numbers and underscores are allowed.",
+    "slugPlaceholder": "e.g. registered_user",
+    "permissions": "Permissions",
+    "superAdminPermDesc": "Super Admin always has all permissions.",
+    "permNotGrantable": "You do not have this permission and cannot grant it",
+    "operationFailed": "Operation failed",
+    "permLabels": {
+      "geemc": {
+        "publish": "Publish Content",
+        "admin": "Access Admin Panel"
+      }
+    }
   }
 }

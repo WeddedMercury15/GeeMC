@@ -5,12 +5,15 @@ const route = useRoute()
 const homeRightSidebarOpen = useState<boolean>('homeRightSidebarOpen', () => false)
 const homeRightSidebarDesktopOpen = useState<boolean>('homeRightSidebarDesktopOpen', () => true)
 
-const links = computed(() => ([
-  { label: t('nav.home'), to: '/' },
-  { label: t('nav.resources'), to: '/resources' },
-  { label: t('nav.forum'), to: '/forum' },
-  { label: t('nav.wiki'), to: '#', disabled: true }
-]))
+const links = computed(() => {
+  const base = [
+    { label: t('nav.home'), to: '/' },
+    { label: t('nav.resources'), to: '/resources' },
+    { label: t('nav.forum'), to: '/forum' },
+    { label: t('nav.wiki'), to: '#', disabled: true }
+  ] as { label: string, to: string, disabled?: boolean }[]
+  return base
+})
 </script>
 
 <template>

@@ -20,6 +20,11 @@ export function useAuth() {
     return Array.isArray(perms) && perms.includes('geemc.publish')
   })
 
+  const canAdmin = computed(() => {
+    const perms = user.value?.permissions
+    return Array.isArray(perms) && perms.includes('geemc.admin')
+  })
+
   async function refresh() {
     // Forward Cookie on SSR (plain $fetch to /api/* does not).
     const fetchMe = useRequestFetch()
@@ -39,6 +44,7 @@ export function useAuth() {
     hydrated,
     isLoggedIn,
     canPublish,
+    canAdmin,
     refresh,
     logout
   }

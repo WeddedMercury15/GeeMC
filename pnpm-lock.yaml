@@ -23,6 +23,9 @@ importers:
       '@nuxtjs/i18n':
         specifier: ^10.2.4
         version: 10.2.4(@azure/identity@4.13.1)(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@vue/compiler-dom@3.5.32)(db0@0.3.4(@libsql/client@0.17.2)(drizzle-orm@1.0.0-beta.21(@libsql/client@0.17.2)(@types/mssql@9.1.11(@azure/core-client@1.10.1))(mssql@11.0.1(@azure/core-client@1.10.1))(mysql2@3.22.0(@types/node@25.6.0))(zod@4.3.6))(mysql2@3.22.0(@types/node@25.6.0)))(eslint@10.2.0(jiti@2.6.1))(ioredis@5.10.1)(magicast@0.5.2)(rollup@4.60.1)(typescript@6.0.2)(vue@3.5.32(typescript@6.0.2))
+      '@tanstack/table-core':
+        specifier: 8.21.3
+        version: 8.21.3
       drizzle-orm:
         specifier: 1.0.0-beta.21
         version: 1.0.0-beta.21(@libsql/client@0.17.2)(@types/mssql@9.1.11(@azure/core-client@1.10.1))(mssql@11.0.1(@azure/core-client@1.10.1))(mysql2@3.22.0(@types/node@25.6.0))(zod@4.3.6)
@@ -45,6 +48,9 @@ importers:
       '@nuxt/eslint':
         specifier: ^1.15.2
         version: 1.15.2(@typescript-eslint/utils@8.58.1(eslint@10.2.0(jiti@2.6.1))(typescript@6.0.2))(@vue/compiler-sfc@3.5.32)(eslint@10.2.0(jiti@2.6.1))(magicast@0.5.2)(typescript@6.0.2)(vite@7.3.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3))
+      cross-env:
+        specifier: ^7.0.3
+        version: 7.0.3
       drizzle-kit:
         specifier: 1.0.0-beta.21
         version: 1.0.0-beta.21
@@ -3186,6 +3192,11 @@ packages:
   croner@10.0.1:
     resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
     engines: {node: '>=18.0'}
+
+  cross-env@7.0.3:
+    resolution: {integrity: sha512-+/HKd6EgcQCJGh2PSjZuUitQBQynKor4wrFbRg4DtAgS1aWO+gU52xpH7M9ScGgXSYmAVS9bIJ8EzuaGw0oNAw==}
+    engines: {node: '>=10.14', npm: '>=6', yarn: '>=1'}
+    hasBin: true
 
   cross-fetch@4.1.0:
     resolution: {integrity: sha512-uKm5PU+MHTootlWEY+mZ4vvXoCn4fLQxT9dSc1sXVMSFkINTJVN8cAQROpwcKm8bJ/c7rgZVIBWzH5T78sNZZw==}
@@ -9160,6 +9171,10 @@ snapshots:
   crelt@1.0.6: {}
 
   croner@10.0.1: {}
+
+  cross-env@7.0.3:
+    dependencies:
+      cross-spawn: 7.0.6
 
   cross-fetch@4.1.0:
     dependencies:
