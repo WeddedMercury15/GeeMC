@@ -21,6 +21,42 @@ const navigationItems = computed(() => [
     label: t('admin.groups'),
     icon: 'i-lucide-shield-user',
     to: '/admin/groups'
+  },
+  {
+    label: t('admin.resources'),
+    icon: 'i-lucide-folder-kanban',
+    children: [
+      {
+        label: t('admin.resource_manage_nav'),
+        icon: 'i-lucide-kanban-square',
+        to: '/admin/resources'
+      },
+      {
+        label: t('admin.resource_categories'),
+        icon: 'i-lucide-tags',
+        to: '/admin/resource-categories'
+      },
+      {
+        label: t('admin.resource_fields_nav'),
+        icon: 'i-lucide-list-filter',
+        to: '/admin/resource-fields'
+      },
+      {
+        label: t('admin.resource_reviews_nav'),
+        icon: 'i-lucide-star',
+        to: '/admin/resource-reviews'
+      },
+      {
+        label: t('admin.resource_followers_nav'),
+        icon: 'i-lucide-heart',
+        to: '/admin/resource-followers'
+      },
+      {
+        label: t('admin.notifications_nav'),
+        icon: 'i-lucide-bell',
+        to: '/admin/notifications'
+      }
+    ]
   }
 ])
 

@@ -17,8 +17,12 @@ const toast = useToast()
 const colorMode = useColorMode()
 
 const { data: meData } = await useFetch<{ user: AuthUser | null }>('/api/auth/me', { key: 'auth-me-navbar' })
+const { data: unreadData, refresh: refreshUnread } = await useFetch<{ unreadTotal: number }>('/api/notifications/unread-count', {
+  key: 'notifications-unread-count-navbar'
+})
 
 const user = computed(() => meData.value?.user ?? auth.user.value ?? null)
+const unreadTotal = computed(() => Number(unreadData.value?.unreadTotal ?? 0))
 
 const canAdmin = computed(() => user.value?.permissions?.includes('geemc.admin') ?? false)
 
@@ -45,6 +49,14 @@ async function handleLogout() {
     isLoggingOut.value = false
   }
 }
+
+watch(
+  () => user.value?.id,
+  async () => {
+    await refreshUnread()
+  },
+  { immediate: true }
+)
 
 const localeSubItems = computed<DropdownMenuItem[]>(() =>
   (locales.value as LocaleEntry[]).map((l) => ({
@@ -135,6 +147,11 @@ const userMenuItems = computed<DropdownMenuItem[][]>(() => {
         icon: 'i-lucide-user',
         to: localePath('/profile')
       },
+      {
+        label: t('layout.nav.notifications'),
+        icon: 'i-lucide-bell',
+        to: localePath('/notifications')
+      },
       ...(canAdmin.value
         ? [
             {
@@ -216,8 +233,28 @@ const userMenuItems = computed<DropdownMenuItem[][]>(() => {
       @click="startGeeIdLogin"
     />
 
+    <UButton
+      v-if="user"
+      variant="ghost"
+      color="neutral"
+      class="relative"
+      :to="localePath('/notifications')"
+      icon="i-lucide-bell"
+      :aria-label="t('layout.nav.notifications')"
+    >
+      <UBadge
+        v-if="unreadTotal > 0"
+        color="error"
+        variant="solid"
+        size="xs"
+        class="absolute -top-1 -right-1"
+      >
+        {{ unreadTotal > 99 ? '99+' : unreadTotal }}
+      </UBadge>
+    </UButton>
+
     <UDropdownMenu
-      v-else
+      v-if="user"
       :items="userMenuItems"
       :content="{
         align: 'end',
