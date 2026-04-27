@@ -17,7 +17,19 @@ export default defineEventHandler(async (event) => {
   if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
 
   const parsed = payloadSchema.safeParse(await readBody(event))
-  if (!parsed.success) throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+  if (!parsed.success) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
+  }
   const action = parsed.data.action ?? 'read'
 
   const db = await useDb()
@@ -73,4 +85,3 @@ export default defineEventHandler(async (event) => {
   if (!ok) throw createError({ statusCode: 404, statusMessage: 'Notification not found' })
   return { success: true, changed: 1 }
 })
-

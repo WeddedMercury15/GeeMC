@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
-import { resourceUpdates, resourceUpdateVotes } from '../../../../../../database/schema'
-import { getCurrentUser } from '../../../../../../utils/auth'
-import { useDb } from '../../../../../../utils/db'
+import { resourceUpdates, resourceUpdateVotes } from '../../../../../database/schema'
+import { getCurrentUser } from '../../../../../utils/auth'
+import { useDb } from '../../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const user = await getCurrentUser(event)

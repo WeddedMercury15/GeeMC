@@ -1,10 +1,57 @@
 import { desc, eq, inArray } from 'drizzle-orm'
-import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { categoryFields, resourceCategories, resourceFieldValues, resourceFields, resourceUpdates, resourceVersions, resources } from '../../database/schema'
 import { useDb } from '../../utils/db'
 import { requireGeemcPublish } from '../../utils/requireGeemcPublish'
 import { recalcAndUpdateCategoryLastResource } from '../../utils/resourceCategoryStats'
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function isStoredFilePath(value: string): boolean {
+  return value.startsWith('/api/files/')
+}
+
+function validateFieldByMatchType(value: string, matchType: string, matchParams: Record<string, string>): boolean {
+  if (!value) return true
+  switch (matchType) {
+    case 'none':
+      return true
+    case 'number':
+      return /^\d+$/.test(value)
+    case 'alphanumeric':
+      return /^[a-zA-Z0-9_ -]+$/.test(value)
+    case 'email':
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+    case 'url':
+      return isHttpUrl(value)
+    case 'regex': {
+      const pattern = String(matchParams?.regex || '').trim()
+      if (!pattern) return true
+      try {
+        const re = new RegExp(pattern)
+        return re.test(value)
+      } catch {
+        return true
+      }
+    }
+    default:
+      return true
+  }
+}
+
+function parseChoiceValues(value: string, fieldType: string): string[] {
+  if (fieldType === 'multiselect' || fieldType === 'checkbox') {
+    return value.split(',').map(x => x.trim()).filter(Boolean)
+  }
+  return [value]
+}
 
 const payloadSchema = z.object({
   title: z.string().min(1).max(255),
@@ -15,16 +62,22 @@ const payloadSchema = z.object({
   kind: z.string().min(1).default('mod'),
   environment: z.string().min(1).default('both'),
   description: z.string().min(1),
-  cover: z.string().url(),
-  icon: z.string().url(),
+  cover: z.string().optional().refine(
+    value => value === undefined || value === '' || isHttpUrl(value) || isStoredFilePath(value),
+    'Invalid cover URL'
+  ),
+  icon: z.string().optional().refine(
+    value => value === undefined || value === '' || isHttpUrl(value) || isStoredFilePath(value),
+    'Invalid icon URL'
+  ),
   supportUrl: z.string().url().optional(),
   externalUrl: z.string().url().optional(),
   externalPurchaseUrl: z.string().url().optional(),
   price: z.number().int().min(0).optional(),
   currency: z.string().max(8).optional(),
-  versionName: z.string().min(1).max(255),
+  versionName: z.string().max(255).optional(),
   versionType: z.enum(['release', 'snapshot']).default('release'),
-  size: z.string().min(1).max(64),
+  size: z.string().max(64).optional(),
   gameVersions: z.array(z.string()).default([]),
   loaders: z.array(z.string()).default([]),
   serverTypes: z.array(z.string()).default([]),
@@ -37,7 +90,17 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const parsed = payloadSchema.safeParse(body)
   if (!parsed.success) {
-    throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
   }
   const p = parsed.data
 
@@ -65,7 +128,14 @@ export default defineEventHandler(async (event) => {
   }
 
   const now = new Date().toISOString()
-  const resourceId = `res_${randomUUID().replace(/-/g, '').slice(0, 20)}`
+  const existingIds = await db.select({ id: resources.id }).from(resources)
+  const maxNumericId = existingIds.reduce((max, row) => {
+    const raw = String(row.id ?? '').trim()
+    if (!raw || !/^\d+$/.test(raw)) return max
+    const numeric = Number.parseInt(raw, 10)
+    return Number.isFinite(numeric) ? Math.max(max, numeric) : max
+  }, 0)
+  const resourceId = String(maxNumericId + 1)
 
   await db.insert(resources).values({
     id: resourceId,
@@ -96,8 +166,8 @@ export default defineEventHandler(async (event) => {
     teamMemberUserIds: [],
     description: p.description,
     descriptionHtml: p.description,
-    cover: p.cover,
-    icon: p.icon,
+    cover: p.cover || '',
+    icon: p.icon || '',
     authorUserId: Number(user.id),
     createDate: now,
     updateDate: now,
@@ -126,30 +196,39 @@ export default defineEventHandler(async (event) => {
     .orderBy(desc(resourceUpdates.id))
     .limit(1)
 
-  await db.insert(resourceVersions).values({
-    resourceId,
-    name: p.versionName,
-    type: p.versionType,
-    date: now,
-    size: p.size,
-    hash: null,
-    gameVersions: p.gameVersions,
-    loaders: p.loaders,
-    serverTypes: p.serverTypes
-  })
+  if (p.resourceType === 'download') {
+    await db.insert(resourceVersions).values({
+      resourceId,
+      name: p.versionName?.trim() || '1.0.0',
+      type: p.versionType,
+      date: now,
+      size: p.size?.trim() || '0 MB',
+      hash: null,
+      gameVersions: p.gameVersions,
+      loaders: p.loaders,
+      serverTypes: p.serverTypes
+    })
 
-  const [latestVersion] = await db
-    .select({ id: resourceVersions.id })
-    .from(resourceVersions)
-    .where(eq(resourceVersions.resourceId, resourceId))
-    .orderBy(desc(resourceVersions.id))
-    .limit(1)
+    const [latestVersion] = await db
+      .select({ id: resourceVersions.id })
+      .from(resourceVersions)
+      .where(eq(resourceVersions.resourceId, resourceId))
+      .orderBy(desc(resourceVersions.id))
+      .limit(1)
 
-  if (latestVersion) {
+    if (latestVersion) {
+      await db
+        .update(resources)
+        .set({
+          currentVersionId: latestVersion.id,
+          descriptionUpdateId: descriptionUpdate?.id ?? 0
+        })
+        .where(eq(resources.id, resourceId))
+    }
+  } else {
     await db
       .update(resources)
       .set({
-        currentVersionId: latestVersion.id,
         descriptionUpdateId: descriptionUpdate?.id ?? 0
       })
       .where(eq(resources.id, resourceId))
@@ -159,21 +238,50 @@ export default defineEventHandler(async (event) => {
   const fieldIds = links.map(x => x.fieldId)
   if (fieldIds.length > 0) {
     const defs = await db
-      .select({ id: resourceFields.id, required: resourceFields.required })
+      .select({
+        id: resourceFields.id,
+        title: resourceFields.title,
+        required: resourceFields.required,
+        fieldType: resourceFields.fieldType,
+        fieldChoices: resourceFields.fieldChoices,
+        maxLength: resourceFields.maxLength,
+        matchType: resourceFields.matchType,
+        matchParams: resourceFields.matchParams
+      })
       .from(resourceFields)
       .where(inArray(resourceFields.id, fieldIds))
     const defMap = new Map(defs.map(d => [d.id, d]))
     for (const fid of fieldIds) {
-      const v = p.customFields[fid]
+      const v = String(p.customFields[fid] ?? '').trim()
       const def = defMap.get(fid)
-      if (def?.required && !v?.trim()) {
+      if (def?.required && !v) {
         throw createError({ statusCode: 400, statusMessage: `Required field missing: ${fid}` })
       }
-      if (v?.trim()) {
+      if (!v) continue
+      if (def?.fieldType === 'select') {
+        const choiceKeys = Object.keys(def.fieldChoices || {})
+        if (choiceKeys.length > 0 && !choiceKeys.includes(v)) {
+          throw createError({ statusCode: 400, statusMessage: `Invalid field choice: ${fid}` })
+        }
+      }
+      if (def?.fieldType === 'radio' || def?.fieldType === 'multiselect' || def?.fieldType === 'checkbox') {
+        const choiceKeys = Object.keys(def.fieldChoices || {})
+        const selected = parseChoiceValues(v, def.fieldType)
+        if (choiceKeys.length > 0 && selected.some(choice => !choiceKeys.includes(choice))) {
+          throw createError({ statusCode: 400, statusMessage: `Invalid field choice: ${fid}` })
+        }
+      }
+      if (def && Number(def.maxLength || 0) > 0 && v.length > Number(def.maxLength)) {
+        throw createError({ statusCode: 400, statusMessage: `Field too long: ${fid}` })
+      }
+      if (def && !validateFieldByMatchType(v, def.matchType, def.matchParams || {})) {
+        throw createError({ statusCode: 400, statusMessage: `Invalid field format: ${fid}` })
+      }
+      if (v) {
         await db.insert(resourceFieldValues).values({
           resourceId,
           fieldId: fid,
-          fieldValue: v.trim()
+          fieldValue: v
         })
       }
     }
@@ -184,6 +292,6 @@ export default defineEventHandler(async (event) => {
   return {
     success: true,
     resourceId,
-    redirectTo: `/${category.slug}/${resourceId}`
+    redirectTo: `/resources/${resourceId}`
   }
 })

@@ -1,4 +1,10 @@
 <script setup lang="ts">
+definePageMeta({
+  layout: 'admin',
+  middleware: 'admin',
+  ssr: false
+})
+
 const { t } = useI18n()
 const toast = useToast()
 
@@ -17,8 +23,8 @@ type ReviewItem = {
 }
 
 const keyword = ref('')
-const ratingMin = ref(1)
-const ratingMax = ref(5)
+const ratingMin = ref<'all' | '1' | '2' | '3' | '4' | '5'>('all')
+const ratingMax = ref<'all' | '1' | '2' | '3' | '4' | '5'>('all')
 const state = ref<'all' | 'visible' | 'deleted'>('all')
 const from = ref('')
 const to = ref('')
@@ -27,13 +33,18 @@ const pageSize = ref(20)
 const selectedIds = ref<number[]>([])
 const submitting = ref(false)
 
+type AdminReviewValidationError = {
+  path?: string
+  message?: string
+}
+
 const { data, pending, refresh } = await useAsyncData(
   'admin-resource-reviews-page',
   () => $fetch<{ items: ReviewItem[], total: number, page: number, pageSize: number }>('/api/admin/resource-reviews/page', {
     query: {
       keyword: keyword.value || undefined,
-      ratingMin: ratingMin.value,
-      ratingMax: ratingMax.value,
+      ratingMin: ratingMin.value === 'all' ? undefined : Number(ratingMin.value),
+      ratingMax: ratingMax.value === 'all' ? undefined : Number(ratingMax.value),
       state: state.value === 'all' ? undefined : state.value,
       from: from.value || undefined,
       to: to.value || undefined,
@@ -47,6 +58,22 @@ const { data, pending, refresh } = await useAsyncData(
 const items = computed(() => data.value?.items ?? [])
 const total = computed(() => data.value?.total ?? 0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const ratingMinItems = computed(() => [
+  { label: t('admin.resource_reviews_page.rating_min_all'), value: 'all' },
+  { label: t('admin.resource_reviews_page.rating_min_1'), value: '1' },
+  { label: t('admin.resource_reviews_page.rating_min_2'), value: '2' },
+  { label: t('admin.resource_reviews_page.rating_min_3'), value: '3' },
+  { label: t('admin.resource_reviews_page.rating_min_4'), value: '4' },
+  { label: t('admin.resource_reviews_page.rating_min_5'), value: '5' }
+])
+const ratingMaxItems = computed(() => [
+  { label: t('admin.resource_reviews_page.rating_max_all'), value: 'all' },
+  { label: t('admin.resource_reviews_page.rating_max_1'), value: '1' },
+  { label: t('admin.resource_reviews_page.rating_max_2'), value: '2' },
+  { label: t('admin.resource_reviews_page.rating_max_3'), value: '3' },
+  { label: t('admin.resource_reviews_page.rating_max_4'), value: '4' },
+  { label: t('admin.resource_reviews_page.rating_max_5'), value: '5' }
+])
 
 function setSelected(id: number, checked: boolean | 'indeterminate') {
   if (checked === 'indeterminate') return
@@ -55,6 +82,36 @@ function setSelected(id: number, checked: boolean | 'indeterminate') {
     return
   }
   selectedIds.value = selectedIds.value.filter(x => x !== id)
+}
+
+function getApplyIntentErrorMessage(error: unknown, fallback: string) {
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: AdminReviewValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const pathMap: Record<string, string> = {
+      ids: t('admin.resource_reviews_page.field_reviews'),
+      intent: t('admin.notifications_page.field_action')
+    }
+    const path = String(first?.path || '')
+    const label = pathMap[path] || Object.entries(pathMap).find(([key]) => path === key || path.startsWith(`${key}.`))?.[1] || ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  return maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message || fallback
 }
 
 async function applyIntent(intent: 'delete' | 'restore', ids?: number[]) {
@@ -75,10 +132,13 @@ async function applyIntent(intent: 'delete' | 'restore', ids?: number[]) {
         : t('admin.resource_reviews_page.restore_success', { count: res.changed }),
       color: 'success'
     })
-  } catch {
+  } catch (error) {
     toast.add({
       title: t('common.error'),
-      description: intent === 'delete' ? t('admin.resource_reviews_page.delete_failed') : t('admin.resource_reviews_page.restore_failed'),
+      description: getApplyIntentErrorMessage(
+        error,
+        intent === 'delete' ? t('admin.resource_reviews_page.delete_failed') : t('admin.resource_reviews_page.restore_failed')
+      ),
       color: 'error'
     })
   } finally {
@@ -106,13 +166,13 @@ async function applyIntent(intent: 'delete' | 'restore', ids?: number[]) {
       />
       <USelect
         v-model="ratingMin"
-        :items="[{ label: '>= 1', value: 1 }, { label: '>= 2', value: 2 }, { label: '>= 3', value: 3 }, { label: '>= 4', value: 4 }, { label: '>= 5', value: 5 }]"
+        :items="ratingMinItems"
         option-attribute="label"
         value-attribute="value"
       />
       <USelect
         v-model="ratingMax"
-        :items="[{ label: '<= 1', value: 1 }, { label: '<= 2', value: 2 }, { label: '<= 3', value: 3 }, { label: '<= 4', value: 4 }, { label: '<= 5', value: 5 }]"
+        :items="ratingMaxItems"
         option-attribute="label"
         value-attribute="value"
       />
@@ -246,7 +306,7 @@ async function applyIntent(intent: 'delete' | 'restore', ids?: number[]) {
               </td>
               <td class="px-4 py-3">
                 <NuxtLink
-                  :to="`/${row.categoryKey}/${row.resourceId}`"
+                  :to="`/resources/${row.resourceId}`"
                   class="font-medium text-(--ui-primary) hover:underline"
                 >
                   {{ row.resourceTitle }}

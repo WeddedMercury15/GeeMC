@@ -41,6 +41,7 @@ export default defineEventHandler(async (event) => {
       minTags: resourceCategories.minTags,
       parentCategoryId: resourceCategories.parentCategoryId,
       displayOrder: resourceCategories.displayOrder,
+      icon: resourceCategories.icon,
       resourcesCount: resourceCategories.resourceCount
     })
     .from(resourceCategories)
@@ -49,10 +50,9 @@ export default defineEventHandler(async (event) => {
 
   return {
     templates,
-    categories: categories.map((c) => ({
+    categories: categories.map(c => ({
       ...c,
       resourcesCount: Number(c.resourcesCount ?? 0)
     }))
   }
 })
-

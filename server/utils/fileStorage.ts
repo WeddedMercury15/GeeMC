@@ -13,14 +13,14 @@ export async function storePublicUpload(params: {
   folder: string
   originalName: string
   content: Buffer
-}) : Promise<StoredFile> {
+}): Promise<StoredFile> {
   const safeName = params.originalName.replace(/[^\w.\-()+\s]/g, '_').slice(0, 120) || 'file'
   const sha256 = createHash('sha256').update(params.content).digest('hex')
   const ext = path.extname(safeName).slice(0, 12)
   const base = path.basename(safeName, ext)
   const fileName = `${base.slice(0, 60)}-${sha256.slice(0, 12)}${ext}`
 
-  const relDir = path.posix.join('public', 'uploads', params.folder)
+  const relDir = path.posix.join('storage', 'uploads', params.folder)
   const absDir = path.join(process.cwd(), relDir)
   await mkdir(absDir, { recursive: true })
 
@@ -28,7 +28,7 @@ export async function storePublicUpload(params: {
   const absPath = path.join(process.cwd(), relPath)
   await writeFile(absPath, params.content)
 
-  const publicUrl = path.posix.join('/uploads', params.folder, fileName)
+  const publicUrl = path.posix.join('/api/files', params.folder, fileName)
   return {
     storagePath: relPath,
     publicUrl,
@@ -36,4 +36,3 @@ export async function storePublicUpload(params: {
     sha256
   }
 }
-

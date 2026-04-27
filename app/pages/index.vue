@@ -301,7 +301,7 @@ const handlePointerMove = (e: PointerEvent) => {
                   ].join(' '),
                   body: 'p-4 h-full flex flex-col'
                 }"
-                @click="router.push(`/${res.categoryKey}/${res.id}`)"
+                @click="router.push(`/resources/${res.id}`)"
                 @pointermove="handlePointerMove"
               >
                 <div class="relative z-10 aspect-[16/10] rounded-md overflow-hidden border border-(--ui-border) bg-(--ui-bg-elevated)">

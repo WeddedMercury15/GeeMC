@@ -82,6 +82,11 @@ const rollbacking = ref(false)
 const rollbackConfirmOpen = ref(false)
 const pendingRollbackLogId = ref<number | null>(null)
 
+type AdminResourceValidationError = {
+  path?: string
+  message?: string
+}
+
 const { data, pending, refresh } = await useAsyncData(
   'admin-resources-page',
   () => $fetch<{ items: AdminResourceItem[], categories: AdminCategoryItem[], total: number, page: number, pageSize: number }>('/api/admin/resources/page', {
@@ -143,6 +148,47 @@ function setSelected(id: string, checked: boolean | 'indeterminate') {
   selectedIds.value = selectedIds.value.filter(x => x !== id)
 }
 
+function getAdminResourceErrorMessage(error: unknown, fallback: string) {
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: AdminResourceValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const pathMap: Record<string, string> = {
+      ids: t('admin.resources_page.field_resources'),
+      intent: t('admin.notifications_page.field_action'),
+      reason: t('admin.resources_page.field_reason'),
+      logId: t('admin.resources_page.field_log'),
+    }
+    const path = String(first?.path || '')
+    const label = pathMap[path] || Object.entries(pathMap).find(([key]) => path === key || path.startsWith(`${key}.`))?.[1] || ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  const statusMessage = maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message
+  if (!statusMessage) return fallback
+
+  const statusMap: Record<string, string> = {
+    'Rollback requires super_admin': t('admin.resources_page.error_rollback_requires_super_admin'),
+    'This log action cannot be rolled back': t('admin.resources_page.error_rollback_action_not_supported'),
+    'Rollback is rate-limited, try again later': t('admin.resources_page.error_rollback_rate_limited'),
+    'Log not found': t('admin.resources_page.error_log_not_found')
+  }
+  return statusMap[statusMessage] || statusMessage
+}
+
 function stateLabel(state: string) {
   if (state === 'visible') return t('admin.resources_page.state_visible')
   if (state === 'moderated') return t('admin.resources_page.state_moderated')
@@ -183,8 +229,8 @@ async function confirmApplyState() {
     confirmOpen.value = false
     await refresh()
     toast.add({ title: t('common.success'), description: t('admin.resources_page.state_updated'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('admin.resources_page.state_update_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getAdminResourceErrorMessage(error, t('admin.resources_page.state_update_failed')), color: 'error' })
   } finally {
     submitting.value = false
   }
@@ -257,8 +303,8 @@ async function confirmRollback() {
     await fetchLogs()
     rollbackConfirmOpen.value = false
     toast.add({ title: t('common.success'), description: t('admin.resources_page.rollback_success'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('admin.resources_page.rollback_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getAdminResourceErrorMessage(error, t('admin.resources_page.rollback_failed')), color: 'error' })
   } finally {
     rollbacking.value = false
     pendingRollbackLogId.value = null
@@ -339,7 +385,7 @@ async function confirmRollback() {
                 <UCheckbox :model-value="selectedIds.includes(row.id)" @update:model-value="(v) => setSelected(row.id, v)" />
               </td>
               <td class="px-4 py-3">
-                <NuxtLink :to="`/${row.categoryKey}/${row.id}`" class="font-medium text-(--ui-primary) hover:underline">
+                <NuxtLink :to="`/resources/${row.id}`" class="font-medium text-(--ui-primary) hover:underline">
                   {{ row.title }}
                 </NuxtLink>
                 <div class="text-xs text-(--ui-text-muted)">{{ row.id }}</div>
@@ -471,36 +517,39 @@ async function confirmRollback() {
     </USlideover>
 
     <UModal v-model:open="confirmOpen">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">{{ confirmTitle }}</div>
-        </template>
-        <div class="space-y-4">
-          <div class="text-sm text-(--ui-text-muted)">{{ confirmDesc }}</div>
-          <div class="flex justify-end gap-2">
-            <UButton color="neutral" variant="outline" @click="confirmOpen = false">{{ t('common.cancel') }}</UButton>
-            <UButton color="primary" :loading="submitting" @click="confirmApplyState">{{ t('common.confirm') }}</UButton>
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="font-semibold">{{ confirmTitle }}</div>
+          </template>
+          <div class="space-y-4">
+            <div class="text-sm text-(--ui-text-muted)">{{ confirmDesc }}</div>
+            <div class="flex justify-end gap-2">
+              <UButton color="neutral" variant="outline" @click="confirmOpen = false">{{ t('common.cancel') }}</UButton>
+              <UButton color="primary" :loading="submitting" @click="confirmApplyState">{{ t('common.confirm') }}</UButton>
+            </div>
           </div>
-        </div>
-      </UCard>
+        </UCard>
+      </template>
     </UModal>
 
     <UModal v-model:open="rollbackConfirmOpen">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">{{ t('admin.resources_page.rollback_confirm_title') }}</div>
-        </template>
-        <div class="space-y-4">
-          <div class="text-sm text-(--ui-text-muted)">
-            {{ t('admin.resources_page.rollback_confirm_desc') }}
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="font-semibold">{{ t('admin.resources_page.rollback_confirm_title') }}</div>
+          </template>
+          <div class="space-y-4">
+            <div class="text-sm text-(--ui-text-muted)">
+              {{ t('admin.resources_page.rollback_confirm_desc') }}
+            </div>
+            <div class="flex justify-end gap-2">
+              <UButton color="neutral" variant="outline" @click="rollbackConfirmOpen = false">{{ t('common.cancel') }}</UButton>
+              <UButton color="warning" :loading="rollbacking" @click="confirmRollback">{{ t('common.confirm') }}</UButton>
+            </div>
           </div>
-          <div class="flex justify-end gap-2">
-            <UButton color="neutral" variant="outline" @click="rollbackConfirmOpen = false">{{ t('common.cancel') }}</UButton>
-            <UButton color="warning" :loading="rollbacking" @click="confirmRollback">{{ t('common.confirm') }}</UButton>
-          </div>
-        </div>
-      </UCard>
+        </UCard>
+      </template>
     </UModal>
   </div>
 </template>
-

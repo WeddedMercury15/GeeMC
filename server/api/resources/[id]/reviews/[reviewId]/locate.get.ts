@@ -1,6 +1,6 @@
 import { and, eq, gt, or } from 'drizzle-orm'
-import { resourceReviews } from '../../../../../../database/schema'
-import { useDb } from '../../../../../../utils/db'
+import { resourceReviews } from '../../../../../database/schema'
+import { useDb } from '../../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const resourceId = getRouterParam(event, 'id')

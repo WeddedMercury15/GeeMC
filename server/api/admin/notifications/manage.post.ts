@@ -12,7 +12,19 @@ const payloadSchema = z.object({
 export default defineEventHandler(async (event) => {
   await requireGeemcAdmin(event)
   const parsed = payloadSchema.safeParse(await readBody(event))
-  if (!parsed.success) throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+  if (!parsed.success) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
+  }
   const { ids, action } = parsed.data
   const db = await useDb()
   const targetIds = Array.from(new Set(ids))
@@ -30,4 +42,3 @@ export default defineEventHandler(async (event) => {
 
   return { success: true, changed: targetIds.length }
 })
-

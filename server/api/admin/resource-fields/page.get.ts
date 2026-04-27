@@ -1,7 +1,15 @@
-import { asc, eq } from 'drizzle-orm'
+import { asc } from 'drizzle-orm'
 import { categoryFields, resourceCategories, resourceFields } from '../../../database/schema'
 import { useDb } from '../../../utils/db'
 import { requireGeemcAdmin } from '../../../utils/requireGeemcAdmin'
+
+function parseDisplayGroups(value: string) {
+  const groups = String(value || '')
+    .split(',')
+    .map(group => group.trim())
+    .filter(Boolean)
+  return groups.length > 0 ? Array.from(new Set(groups)) : ['above_info']
+}
 
 export default defineEventHandler(async (event) => {
   await requireGeemcAdmin(event)
@@ -10,7 +18,9 @@ export default defineEventHandler(async (event) => {
   const categories = await db
     .select({
       id: resourceCategories.id,
-      name: resourceCategories.name
+      name: resourceCategories.name,
+      parentCategoryId: resourceCategories.parentCategoryId,
+      icon: resourceCategories.icon
     })
     .from(resourceCategories)
     .orderBy(asc(resourceCategories.displayOrder), asc(resourceCategories.id))
@@ -24,6 +34,8 @@ export default defineEventHandler(async (event) => {
       displayOrder: resourceFields.displayOrder,
       fieldType: resourceFields.fieldType,
       fieldChoices: resourceFields.fieldChoices,
+      matchType: resourceFields.matchType,
+      matchParams: resourceFields.matchParams,
       required: resourceFields.required,
       maxLength: resourceFields.maxLength,
       viewableResource: resourceFields.viewableResource
@@ -41,8 +53,9 @@ export default defineEventHandler(async (event) => {
 
   return {
     categories,
-    fields: fields.map((f) => ({
+    fields: fields.map(f => ({
       ...f,
+      displayGroups: parseDisplayGroups(f.displayGroup),
       categoryIds: byField.get(f.id) ?? []
     }))
   }

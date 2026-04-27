@@ -24,6 +24,11 @@ const timeWindow = ref<'all' | '24h' | '7d' | '30d'>('all')
 const unreadOnly = ref(false)
 const markingRead = ref(false)
 
+type WatchedUpdatesValidationError = {
+  path?: string
+  message?: string
+}
+
 const windowItems = computed(() => [
   { label: t('resources.watched_updates_window_all'), value: 'all' as const },
   { label: t('resources.watched_updates_window_24h'), value: '24h' as const },
@@ -34,8 +39,16 @@ const windowItems = computed(() => [
 const { data } = await useAsyncData(
   'resources-watched-updates',
   async () => {
-    if (!auth.loggedIn.value) {
-      return { items: [], total: 0, page: page.value, pageSize: pageSize.value }
+    if (!auth.isLoggedIn.value) {
+      return {
+        items: [],
+        total: 0,
+        page: page.value,
+        pageSize: pageSize.value,
+        window: timeWindow.value,
+        unreadOnly: unreadOnly.value,
+        unreadTotal: 0
+      }
     }
     return await $fetch<{ items: WatchedUpdateItem[], total: number, page: number, pageSize: number, window: string, unreadOnly: boolean, unreadTotal: number }>('/api/resources/watched-updates', {
       query: {
@@ -46,7 +59,7 @@ const { data } = await useAsyncData(
       }
     })
   },
-  { watch: [page, pageSize, timeWindow, unreadOnly, () => auth.loggedIn.value] }
+  { watch: [page, pageSize, timeWindow, unreadOnly, () => auth.isLoggedIn.value] }
 )
 
 const items = computed(() => data.value?.items ?? [])
@@ -60,30 +73,59 @@ watch(unreadOnly, () => {
   page.value = 1
 })
 
+function getWatchedUpdatesErrorMessage(error: unknown) {
+  const fallback = t('resources.watched_updates_mark_read_failed')
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: WatchedUpdatesValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const pathMap: Record<string, string> = {
+      updateId: t('resources.update_title')
+    }
+    const label = first?.path ? pathMap[first.path] : ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  return maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message || fallback
+}
+
 async function markAllRead() {
-  if (!auth.loggedIn.value) return
+  if (!auth.isLoggedIn.value) return
   markingRead.value = true
   try {
     await $fetch('/api/resources/watched-updates/read-all', { method: 'POST' })
     await refreshNuxtData('resources-watched-updates')
     toast.add({ title: t('common.success'), description: t('resources.watched_updates_mark_read_done'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.watched_updates_mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getWatchedUpdatesErrorMessage(error), color: 'error' })
   } finally {
     markingRead.value = false
   }
 }
 
 async function markResourceRead(updateId: number) {
-  if (!auth.loggedIn.value) return
+  if (!auth.isLoggedIn.value) return
   try {
     await $fetch('/api/resources/watched-updates/read-resource', {
       method: 'POST',
       body: { updateId }
     })
     await refreshNuxtData('resources-watched-updates')
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.watched_updates_mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getWatchedUpdatesErrorMessage(error), color: 'error' })
   }
 }
 
@@ -116,7 +158,7 @@ function updateTypeLabel(type: string) {
     </div>
 
     <UEmpty
-      v-if="!auth.loggedIn.value"
+      v-if="!auth.isLoggedIn.value"
       :title="t('common.error')"
       :description="t('resources.watched_updates_login_required')"
     />
@@ -162,7 +204,7 @@ function updateTypeLabel(type: string) {
           <div class="min-w-0">
             <div class="font-medium">
               <NuxtLink
-                :to="`/${log.resourceCategoryKey}/${log.resourceId}`"
+                :to="`/resources/${log.resourceId}`"
                 class="hover:underline"
               >
                 {{ log.resourceTitle }}
@@ -234,7 +276,7 @@ function updateTypeLabel(type: string) {
     </div>
 
     <div
-      v-if="auth.loggedIn.value && total > pageSize"
+      v-if="auth.isLoggedIn.value && total > pageSize"
       class="mt-5 flex justify-center"
     >
       <UPagination

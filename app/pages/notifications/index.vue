@@ -8,6 +8,11 @@ const typeFilter = ref('all')
 const selectedIds = ref<number[]>([])
 const toast = useToast()
 
+type NotificationValidationError = {
+  path?: string
+  message?: string
+}
+
 if (!auth.isLoggedIn.value) {
   throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
 }
@@ -64,12 +69,44 @@ const typeItems = computed(() => [
   { label: t('notifications.type_resource_description'), value: 'resource_description' }
 ])
 
+function getNotificationActionErrorMessage(error: unknown) {
+  const fallback = t('notifications.mark_read_failed')
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: NotificationValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const pathMap: Record<string, string> = {
+      id: t('admin.notifications_page.field_notifications'),
+      ids: t('admin.notifications_page.field_notifications'),
+      action: t('admin.notifications_page.field_action')
+    }
+    const path = String(first?.path || '')
+    const label = pathMap[path] || Object.entries(pathMap).find(([key]) => path === key || path.startsWith(`${key}.`))?.[1] || ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  return maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message || fallback
+}
+
 async function markRead(id: number) {
   try {
     await $fetch('/api/notifications/read', { method: 'POST', body: { id } })
     await refresh()
-  } catch {
-    toast.add({ title: t('common.error'), description: t('notifications.mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getNotificationActionErrorMessage(error), color: 'error' })
   }
 }
 
@@ -78,8 +115,8 @@ async function markSelectedReadFromGroup(ids: number[]) {
   try {
     await $fetch('/api/notifications/read', { method: 'POST', body: { ids, action: 'read' } })
     await refresh()
-  } catch {
-    toast.add({ title: t('common.error'), description: t('notifications.mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getNotificationActionErrorMessage(error), color: 'error' })
   }
 }
 
@@ -110,8 +147,8 @@ async function markSelectedRead() {
     await $fetch('/api/notifications/read', { method: 'POST', body: { ids: selectedIds.value, action: 'read' } })
     selectedIds.value = []
     await refresh()
-  } catch {
-    toast.add({ title: t('common.error'), description: t('notifications.mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getNotificationActionErrorMessage(error), color: 'error' })
   }
 }
 
@@ -120,8 +157,8 @@ async function markAllRead() {
     await $fetch('/api/notifications/read', { method: 'POST', body: { all: true, action: 'read' } })
     selectedIds.value = []
     await refresh()
-  } catch {
-    toast.add({ title: t('common.error'), description: t('notifications.mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getNotificationActionErrorMessage(error), color: 'error' })
   }
 }
 
@@ -131,8 +168,8 @@ async function markSelectedUnread() {
     await $fetch('/api/notifications/read', { method: 'POST', body: { ids: selectedIds.value, action: 'unread' } })
     selectedIds.value = []
     await refresh()
-  } catch {
-    toast.add({ title: t('common.error'), description: t('notifications.mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getNotificationActionErrorMessage(error), color: 'error' })
   }
 }
 
@@ -142,8 +179,8 @@ async function deleteSelected() {
     await $fetch('/api/notifications/read', { method: 'POST', body: { ids: selectedIds.value, action: 'delete' } })
     selectedIds.value = []
     await refresh()
-  } catch {
-    toast.add({ title: t('common.error'), description: t('notifications.mark_read_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getNotificationActionErrorMessage(error), color: 'error' })
   }
 }
 </script>
@@ -194,8 +231,8 @@ async function deleteSelected() {
           <div class="text-sm text-(--ui-text-muted) mt-1">{{ g.item.messageText || g.item.message }}</div>
           <div class="mt-2 flex items-center justify-between">
             <NuxtLink
-              v-if="g.item.resourceId && g.item.resourceCategoryKey"
-              :to="g.item.targetUrl || `/${g.item.resourceCategoryKey}/${g.item.resourceId}`"
+              v-if="g.item.resourceId"
+              :to="g.item.targetUrl || `/resources/${g.item.resourceId}`"
               class="text-xs text-(--ui-primary) hover:underline"
             >
               {{ t('notifications.open_resource') }}
@@ -218,4 +255,3 @@ async function deleteSelected() {
     </div>
   </UContainer>
 </template>
-

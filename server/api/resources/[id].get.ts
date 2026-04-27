@@ -1,4 +1,4 @@
-import { alias, and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { ResourceDetail, ResourceVersion } from '../../../app/utils/resourceCatalog'
 import { resourceCategories, resourceFollows, resourceGallery, resourceLinks, resourceReviewReplies, resourceReviews, resourceReviewVotes, resourceTemplates, resourceUpdates, resourceUpdateVotes, resourceVersionFiles, resourceVersions, resources, users } from '../../database/schema'
 import { getCurrentUser } from '../../utils/auth'
@@ -288,25 +288,30 @@ export default defineEventHandler(async (event) => {
   }
   const repliesByReviewId = new Map<number, { userId: number, userName: string, userAvatar: string, message: string, createdAt: string, updatedAt: string }>()
   if (reviewIds.length > 0) {
-    const replier = alias(users, 'replier')
     const replyRows = await db
       .select({
         reviewId: resourceReviewReplies.reviewId,
         userId: resourceReviewReplies.replierUserId,
-        userName: replier.username,
-        userGeeIdUserId: replier.geeIdUserId,
         message: resourceReviewReplies.message,
         createdAt: resourceReviewReplies.createdAt,
         updatedAt: resourceReviewReplies.updatedAt
       })
       .from(resourceReviewReplies)
-      .innerJoin(replier, eq(resourceReviewReplies.replierUserId, replier.id))
       .where(inArray(resourceReviewReplies.reviewId, reviewIds))
+    const replierIds = Array.from(new Set(replyRows.map(row => Number(row.userId)).filter(v => Number.isFinite(v) && v > 0)))
+    const replierRows = replierIds.length > 0
+      ? await db
+          .select({ id: users.id, username: users.username, geeIdUserId: users.geeIdUserId })
+          .from(users)
+          .where(inArray(users.id, replierIds))
+      : []
+    const replierById = new Map(replierRows.map(r => [Number(r.id), r]))
     for (const row of replyRows) {
+      const replier = replierById.get(Number(row.userId))
       repliesByReviewId.set(Number(row.reviewId), {
         userId: Number(row.userId),
-        userName: row.userName,
-        userAvatar: resolveUserAvatarUrl(null, row.userGeeIdUserId) ?? '',
+        userName: replier?.username ?? '',
+        userAvatar: resolveUserAvatarUrl(null, replier?.geeIdUserId ?? null) ?? '',
         message: row.message,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt

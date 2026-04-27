@@ -9,7 +9,6 @@ export async function ensureDefaultResourceTemplates(db: Db) {
 
   await db.insert(resourceTemplates).values([
     { name: 'Default', key: 'default', cardAspectRatio: '16/9' },
-    { name: 'Square', key: 'square', cardAspectRatio: '1/1' }
+    { name: 'Grid', key: 'grid', cardAspectRatio: '1/1' }
   ])
 }
-

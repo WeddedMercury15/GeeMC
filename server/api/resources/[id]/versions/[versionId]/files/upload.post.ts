@@ -12,7 +12,17 @@ export default defineEventHandler(async (event) => {
   const versionIdRaw = getRouterParam(event, 'versionId')
   const versionId = Number(versionIdRaw)
   if (!resourceId || !Number.isFinite(versionId) || versionId <= 0) {
-    throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: [
+          { path: 'params.id', message: resourceId ? '' : 'Required' },
+          { path: 'params.versionId', message: Number.isFinite(versionId) && versionId > 0 ? '' : 'Expected positive number' }
+        ].filter(item => item.message)
+      }
+    })
   }
 
   const form = await readMultipartFormData(event)
@@ -55,4 +65,3 @@ export default defineEventHandler(async (event) => {
 
   return { success: true, url: stored.publicUrl }
 })
-

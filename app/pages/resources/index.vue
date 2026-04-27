@@ -12,7 +12,16 @@ type ResourceCategoryItem = {
   id: number
   name: string
   slug: string
+  parentCategoryId: number
+  icon?: string
   resourcesCount: number
+}
+
+type CategoryTreeNode = {
+  label: string
+  value: string
+  icon?: string
+  children?: CategoryTreeNode[]
 }
 
 const searchQuery = ref('')
@@ -24,12 +33,8 @@ const { data: resourcesData } = await useAsyncData(
   'resources-list',
   () => {
     const q: Record<string, string> = {}
-    const ed = route.query.edition
-    const kd = route.query.kind
     const cg = route.query.category
     const tg = route.query.tag
-    if (typeof ed === 'string' && ed) q.edition = ed
-    if (typeof kd === 'string' && kd) q.kind = kd
     if (typeof cg === 'string' && cg) q.category = cg
     if (typeof tg === 'string' && tg) q.tag = tg
     if (searchQuery.value.trim()) q.keyword = searchQuery.value.trim()
@@ -40,7 +45,7 @@ const { data: resourcesData } = await useAsyncData(
       query: q
     })
   },
-  { watch: [() => route.query.edition, () => route.query.kind, () => route.query.category, searchQuery, sortBy, currentPage, pageSize] }
+  { watch: [() => route.query.category, () => route.query.tag, searchQuery, sortBy, currentPage, pageSize] }
 )
 
 type ViewMode = 'card' | 'list'
@@ -55,59 +60,56 @@ const sortOptions = computed(() => [
   { label: t('resources.sort_reviews'), value: 'reviews' as const }
 ])
 
-const editionFilterItems = computed(() => [
-  { value: 'all', label: t('resources.filter_edition_all') },
-  { value: 'java', label: t('resources.taxonomy.edition_java') },
-  { value: 'bedrock', label: t('resources.taxonomy.edition_bedrock') }
-])
-
-const editionModel = computed({
-  get: () => (typeof route.query.edition === 'string' && route.query.edition ? route.query.edition : 'all'),
-  set: (v: string) => {
-    const q = { ...route.query } as Record<string, string | string[] | null | undefined>
-    if (v && v !== 'all') q.edition = v
-    else delete q.edition
-    void router.push({ query: q })
-  }
-})
-
-const kindInput = ref(typeof route.query.kind === 'string' ? route.query.kind : '')
-
-watch(
-  () => route.query.kind,
-  (k) => {
-    kindInput.value = typeof k === 'string' ? k : ''
-  }
-)
-
-function applyKindFilter() {
-  const q = { ...route.query } as Record<string, string | string[] | null | undefined>
-  if (kindInput.value.trim()) q.kind = kindInput.value.trim()
-  else delete q.kind
-  void router.push({ query: q })
-}
-
-function taxonomyEditionLabel(ed: string) {
-  const k = `resources.taxonomy.edition_${ed}`
-  const tr = t(k)
-  return tr !== k ? tr : ed
-}
-
-function taxonomyKindLabel(ed: string, kind: string) {
-  const k = `resources.taxonomy.kind_${ed}_${kind}`
-  const tr = t(k)
-  return tr !== k ? tr : kind
-}
-
-function taxonomyEnvLabel(env: string) {
-  const k = `resources.taxonomy.environment_${env}`
-  const tr = t(k)
-  return tr !== k ? tr : env
-}
-
-const isResourcesIndex = computed(() => route.path === '/resources')
 const selectedCategory = computed(() => String(route.query.category ?? ''))
 const categories = computed<ResourceCategoryItem[]>(() => resourcesData.value?.categories ?? [])
+const expandedCategoryTreeKeys = ref<string[]>([])
+const categoryChevronTogglePending = ref(false)
+const categoryTreeItems = computed<CategoryTreeNode[]>(() => {
+  const byParent = new Map<number, ResourceCategoryItem[]>()
+  for (const category of categories.value) {
+    const parentId = Number(category.parentCategoryId ?? 0)
+    const list = byParent.get(parentId) ?? []
+    list.push(category)
+    byParent.set(parentId, list)
+  }
+
+  const build = (parentId: number): CategoryTreeNode[] => {
+    const children = (byParent.get(parentId) ?? [])
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return children.map((child) => {
+      const nodes = build(child.id)
+      return {
+        label: child.name,
+        value: child.slug,
+        icon: child.icon || 'i-lucide-folder',
+        ...(nodes.length ? { children: nodes } : {})
+      }
+    })
+  }
+
+  return [
+    {
+      label: t('resources.sidebar_all'),
+      value: '__all__',
+      icon: 'i-lucide-list'
+    },
+    ...build(0)
+  ]
+})
+const defaultExpandedCategoryTreeKeys = computed(() => {
+  const keys: string[] = []
+  const walk = (items: CategoryTreeNode[]) => {
+    for (const item of items) {
+      if (item.children?.length) {
+        keys.push(String(item.value))
+        walk(item.children)
+      }
+    }
+  }
+  walk(categoryTreeItems.value)
+  return keys
+})
 
 function goAllResources() {
   void router.push('/resources')
@@ -116,6 +118,27 @@ function goAllResources() {
 function goCategory(slug: string) {
   void router.push({ path: '/resources', query: { ...route.query, category: slug } })
 }
+function onCategoryTreeSelect(item: unknown) {
+  if (!item || typeof item !== 'object' || !('value' in item)) return
+  const value = String((item as { value: string }).value)
+  if (!value || value === '__all__') {
+    goAllResources()
+    return
+  }
+  goCategory(value)
+}
+function onCategoryTreeExpandedUpdate(keys: string[]) {
+  if (!categoryChevronTogglePending.value) return
+  expandedCategoryTreeKeys.value = keys
+  categoryChevronTogglePending.value = false
+}
+function toggleCategoryTreeNode(handleToggle: () => void) {
+  categoryChevronTogglePending.value = true
+  handleToggle()
+}
+watch(categoryTreeItems, () => {
+  expandedCategoryTreeKeys.value = [...defaultExpandedCategoryTreeKeys.value]
+}, { immediate: true })
 
 const handleUpload = () => {
   if (!auth.canPublish.value) {
@@ -132,24 +155,66 @@ const handleUpload = () => {
 const resources = computed<ResourceListItem[]>(() => resourcesData.value?.items ?? [])
 const totalCount = computed(() => Number(resourcesData.value?.total ?? 0))
 const pagedResources = computed(() => resources.value)
+const pendingTag = ref('')
 
-watch([searchQuery, sortBy, () => route.query.edition, () => route.query.kind, () => route.query.category, () => route.query.tag], () => {
+watch([searchQuery, sortBy, () => route.query.category, () => route.query.tag], () => {
   currentPage.value = 1
 })
 
+watch(
+  () => route.query.tag,
+  (tag) => {
+    pendingTag.value = typeof tag === 'string' ? tag : ''
+  },
+  { immediate: true }
+)
+
 const activeTag = computed(() => (typeof route.query.tag === 'string' ? route.query.tag : ''))
+const selectedCategoryName = computed(() => {
+  if (!selectedCategory.value) return ''
+  return categories.value.find(c => c.slug === selectedCategory.value)?.name ?? selectedCategory.value
+})
+const sortLabel = computed(() => sortOptions.value.find(item => item.value === sortBy.value)?.label ?? '')
 
 const clearAllFilters = () => {
   searchQuery.value = ''
   sortBy.value = 'hot'
+  pendingTag.value = ''
   const q = { ...route.query } as Record<string, string | string[] | null | undefined>
-  delete q.edition
-  delete q.kind
   delete q.category
   delete q.tag
   currentPage.value = 1
   void router.push({ query: q })
 }
+
+function setTagFilter() {
+  const q = { ...route.query } as Record<string, string | string[] | null | undefined>
+  if (pendingTag.value.trim()) q.tag = pendingTag.value.trim()
+  else delete q.tag
+  void router.push({ query: q })
+}
+
+function clearCategoryFilter() {
+  const q = { ...route.query } as Record<string, string | string[] | null | undefined>
+  delete q.category
+  void router.push({ query: q })
+}
+
+function clearTagFilter() {
+  const q = { ...route.query } as Record<string, string | string[] | null | undefined>
+  delete q.tag
+  void router.push({ query: q })
+}
+
+function clearKeywordFilter() {
+  searchQuery.value = ''
+}
+
+function clearSortFilter() {
+  sortBy.value = 'hot'
+}
+
+const hasAnyFilter = computed(() => !!selectedCategory.value || !!activeTag.value || !!searchQuery.value.trim() || sortBy.value !== 'hot')
 
 const handlePointerMove = (e: PointerEvent) => {
   const el = e.currentTarget as HTMLElement | null
@@ -175,130 +240,164 @@ const aspectRatioStyle = (ratio?: string) => {
         class="hidden lg:block h-fit sticky top-22"
         :ui="{ body: '!p-2' }"
       >
-        <UButton
-          color="neutral"
-          :variant="isResourcesIndex && !selectedCategory ? 'soft' : 'ghost'"
-          icon="i-lucide-list"
-          class="justify-start w-full"
-          @click="goAllResources"
+        <UTree
+          :expanded="expandedCategoryTreeKeys"
+          :items="categoryTreeItems"
+          :get-key="(item) => item.value"
+          @update:model-value="onCategoryTreeSelect"
+          @update:expanded="onCategoryTreeExpandedUpdate"
         >
-          {{ t('resources.sidebar_all') }}
-        </UButton>
-
-        <div class="mt-4 px-2 space-y-2">
-          <div class="text-xs font-medium text-muted px-1">
-            {{ t('resources.filter_edition') }}
-          </div>
-          <USelect
-            v-model="editionModel"
-            class="w-full"
-            :items="editionFilterItems"
-            option-attribute="label"
-            value-attribute="value"
-            size="sm"
-          />
-          <div class="text-xs font-medium text-muted px-1 pt-1">
-            {{ t('resources.filter_kind') }}
-          </div>
-          <UInput
-            v-model="kindInput"
-            size="sm"
-            class="w-full"
-            :placeholder="t('resources.filter_kind_placeholder')"
-            @blur="applyKindFilter"
-            @keyup.enter="applyKindFilter"
-          />
-        </div>
-
-        <UButton
-          v-for="c in categories"
-          :key="c.id"
-          color="neutral"
-          :variant="selectedCategory === c.slug ? 'soft' : 'ghost'"
-          icon="i-lucide-tag"
-          class="justify-start w-full mt-1"
-          @click="goCategory(c.slug)"
-        >
-          <span class="truncate">{{ c.name }}</span>
-        </UButton>
+          <template #item-wrapper="{ item, expanded, handleToggle }">
+            <div
+              :class="[
+                'relative group w-full flex items-center text-sm select-none before:absolute before:inset-y-px before:inset-x-0 before:z-[-1] before:rounded-md',
+                'focus:outline-none focus-visible:outline-none focus-visible:before:ring-inset focus-visible:before:ring-2 focus-visible:before:ring-primary',
+                'px-2.5 py-1.5 gap-1.5 transition-colors before:transition-colors',
+                selectedCategory === item.value || (!selectedCategory && item.value === '__all__')
+                  ? 'before:bg-elevated text-primary'
+                  : 'hover:text-highlighted hover:before:bg-elevated/50'
+              ]"
+              @click="onCategoryTreeSelect(item)"
+            >
+              <UIcon
+                :name="item.icon || (item.children?.length ? (expanded ? 'i-lucide-folder-open' : 'i-lucide-folder') : 'i-lucide-folder')"
+                class="size-5 shrink-0 relative"
+              />
+              <span class="truncate">{{ item.label }}</span>
+              <span
+                v-if="item.children?.length"
+                class="ms-auto inline-flex gap-1.5 items-center"
+              >
+                <button
+                  type="button"
+                  class="inline-flex items-center justify-center text-(--ui-text-toned) hover:text-highlighted"
+                  @click.stop="toggleCategoryTreeNode(handleToggle)"
+                >
+                  <UIcon
+                    name="i-lucide-chevron-down"
+                    :class="[
+                      'size-5 shrink-0 transform transition-transform duration-200',
+                      expanded ? 'rotate-180' : ''
+                    ]"
+                  />
+                </button>
+              </span>
+            </div>
+          </template>
+        </UTree>
       </UCard>
 
       <div class="flex flex-col gap-3 min-w-0">
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <UInput
-            v-model="searchQuery"
-            icon="i-lucide-search"
-            :placeholder="t('resources.search_placeholder')"
-            class="md:max-w-md"
-          />
-          <div class="flex items-center gap-2">
-            <div class="inline-flex h-9 items-center p-0.5 bg-neutral-100 dark:bg-neutral-900/50 border border-(--ui-border) rounded-lg shadow-inner overflow-x-auto no-scrollbar">
-              <button
-                v-for="item in sortOptions"
-                :key="item.value"
-                class="h-7 flex items-center justify-center gap-2 px-3 text-sm rounded-md transition-all duration-200 whitespace-nowrap"
-                :class="sortBy === item.value
-                  ? 'bg-white dark:bg-neutral-800 text-primary-600 dark:text-primary-400 shadow-sm ring-1 ring-black/5 dark:ring-white/10 font-medium'
-                  : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'"
-                @click="sortBy = item.value"
-              >
-                {{ item.label }}
-              </button>
+        <div class="flex flex-col gap-3">
+          <div class="w-full">
+            <div class="flex items-center justify-between gap-2 rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) px-3 py-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <UBadge
+                  v-if="selectedCategory"
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-folder"
+                  class="cursor-pointer"
+                  @click="clearCategoryFilter"
+                >
+                  {{ selectedCategoryName }}
+                </UBadge>
+                <UBadge
+                  v-if="activeTag"
+                  color="primary"
+                  variant="subtle"
+                  icon="i-lucide-tag"
+                  class="cursor-pointer"
+                  @click="clearTagFilter"
+                >
+                  {{ activeTag }}
+                </UBadge>
+                <UBadge
+                  v-if="searchQuery.trim()"
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-search"
+                  class="cursor-pointer"
+                  @click="clearKeywordFilter"
+                >
+                  {{ searchQuery.trim() }}
+                </UBadge>
+                <UBadge
+                  v-if="sortBy !== 'hot'"
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-arrow-up-down"
+                  class="cursor-pointer"
+                  @click="clearSortFilter"
+                >
+                  {{ sortLabel }}
+                </UBadge>
+                <span
+                  v-if="!hasAnyFilter"
+                  class="text-sm text-(--ui-text-muted)"
+                >
+                  {{ t('resources.filter_none') }}
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <UButton
+                  v-if="auth.isLoggedIn.value"
+                  color="primary"
+                  icon="i-lucide-upload"
+                  @click="handleUpload"
+                >
+                  {{ t('resources.upload') }}
+                </UButton>
+                <UPopover>
+                  <UButton
+                    color="primary"
+                    variant="outline"
+                    icon="i-lucide-filter"
+                    class="transition-colors hover:bg-primary/10"
+                  >
+                    {{ t('resources.filters') }}
+                  </UButton>
+                  <template #content>
+                    <div class="w-80 space-y-3 p-3">
+                      <UFormField :label="t('resources.search_placeholder')">
+                        <UInput
+                          v-model="searchQuery"
+                          icon="i-lucide-search"
+                          :placeholder="t('resources.search_placeholder')"
+                        />
+                      </UFormField>
+                      <UFormField :label="t('resources.sort_by')">
+                        <USelect
+                          v-model="sortBy"
+                          :items="sortOptions"
+                          option-attribute="label"
+                          value-attribute="value"
+                        />
+                      </UFormField>
+                      <UFormField :label="t('resources.filter_tag')">
+                        <UInput
+                          v-model="pendingTag"
+                          icon="i-lucide-tag"
+                          :placeholder="t('resources.filter_tag_placeholder')"
+                          @blur="setTagFilter"
+                          @keyup.enter="setTagFilter"
+                        />
+                      </UFormField>
+                      <div class="flex justify-end">
+                        <UButton
+                          color="neutral"
+                          variant="outline"
+                          @click="clearAllFilters"
+                        >
+                          {{ t('resources.clear_filters') }}
+                        </UButton>
+                      </div>
+                    </div>
+                  </template>
+                </UPopover>
+              </div>
             </div>
-            <UButton
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-message-square"
-              @click="router.push('/resources/latest-reviews')"
-            >
-              {{ t('resources.latest_reviews_title') }}
-            </UButton>
-            <UButton
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-clock-3"
-              @click="router.push('/resources/latest-updates')"
-            >
-              {{ t('resources.latest_updates_title') }}
-            </UButton>
-            <UButton
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-bell-ring"
-              @click="auth.loggedIn.value ? router.push('/resources/watched-updates') : toast.add({ title: t('common.error'), description: t('resources.watched_updates_login_required'), color: 'error' })"
-            >
-              {{ t('resources.watched_updates_title') }}
-            </UButton>
-            <UButton
-              color="primary"
-              icon="i-lucide-upload"
-              @click="handleUpload"
-            >
-              {{ t('resources.upload') }}
-            </UButton>
           </div>
-        </div>
-
-        <div
-          v-if="activeTag"
-          class="flex items-center gap-2 text-sm"
-        >
-          <UBadge
-            color="primary"
-            variant="subtle"
-            icon="i-lucide-tag"
-          >
-            {{ activeTag }}
-          </UBadge>
-          <UButton
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-x"
-            @click="router.push({ path: '/resources', query: { ...route.query, tag: undefined } })"
-          >
-            {{ t('resources.clear_tag') }}
-          </UButton>
         </div>
 
         <div class="flex items-center justify-between text-sm text-muted">
@@ -376,7 +475,7 @@ const aspectRatioStyle = (ratio?: string) => {
               ].join(' '),
               body: '!p-4'
             }"
-            @click="router.push(`/${res.categoryKey}/${res.id}`)"
+            @click="router.push(`/resources/${res.id}`)"
             @pointermove="handlePointerMove"
           >
             <div
@@ -404,28 +503,8 @@ const aspectRatioStyle = (ratio?: string) => {
               <div class="text-xs text-muted mt-1 line-clamp-2">
                 {{ res.description }}
               </div>
-              <div class="flex flex-wrap gap-1 mt-2">
-                <UBadge
-                  color="neutral"
-                  variant="outline"
-                  size="xs"
-                >
-                  {{ taxonomyEditionLabel(res.taxonomy.edition) }}
-                </UBadge>
-                <UBadge
-                  color="neutral"
-                  variant="outline"
-                  size="xs"
-                >
-                  {{ taxonomyKindLabel(res.taxonomy.edition, res.taxonomy.kind) }}
-                </UBadge>
-                <UBadge
-                  color="neutral"
-                  variant="outline"
-                  size="xs"
-                >
-                  {{ taxonomyEnvLabel(res.taxonomy.environment) }}
-                </UBadge>
+              <div class="mt-2 text-xs text-muted">
+                {{ res.categoryKey }}
               </div>
             </div>
 
@@ -485,7 +564,7 @@ const aspectRatioStyle = (ratio?: string) => {
             :key="res.id"
             class="cursor-pointer hover:shadow-md transition"
             :ui="{ body: '!p-4' }"
-            @click="router.push(`/${res.categoryKey}/${res.id}`)"
+            @click="router.push(`/resources/${res.id}`)"
           >
             <div class="flex items-center gap-4">
               <div class="w-16 h-16 rounded-md overflow-hidden bg-(--ui-bg-elevated) border border-(--ui-border) shrink-0">
@@ -507,28 +586,8 @@ const aspectRatioStyle = (ratio?: string) => {
                 <div class="text-xs text-muted mt-1 line-clamp-2">
                   {{ res.description }}
                 </div>
-                <div class="flex flex-wrap gap-1 mt-2">
-                  <UBadge
-                    color="neutral"
-                    variant="outline"
-                    size="xs"
-                  >
-                    {{ taxonomyEditionLabel(res.taxonomy.edition) }}
-                  </UBadge>
-                  <UBadge
-                    color="neutral"
-                    variant="outline"
-                    size="xs"
-                  >
-                    {{ taxonomyKindLabel(res.taxonomy.edition, res.taxonomy.kind) }}
-                  </UBadge>
-                  <UBadge
-                    color="neutral"
-                    variant="outline"
-                    size="xs"
-                  >
-                    {{ taxonomyEnvLabel(res.taxonomy.environment) }}
-                  </UBadge>
+                <div class="mt-2 text-xs text-muted">
+                  {{ res.categoryKey }}
                 </div>
                 <div class="mt-2 flex items-center justify-between text-xs text-muted">
                   <div class="flex items-center gap-2 min-w-0">

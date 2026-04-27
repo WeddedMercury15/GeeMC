@@ -1,9 +1,9 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
-import { groupMembers, resourceUpdates, resources, userGroups, userNotifications } from '../../../../../../database/schema'
-import { getCurrentUser } from '../../../../../../utils/auth'
-import { useDb } from '../../../../../../utils/db'
-import { canManageResourceByTeam } from '../../../../../../utils/resourceTeam'
+import { groupMembers, resourceUpdates, resources, userGroups, userNotifications } from '../../../../../database/schema'
+import { getCurrentUser } from '../../../../../utils/auth'
+import { useDb } from '../../../../../utils/db'
+import { canManageResourceByTeam } from '../../../../../utils/resourceTeam'
 
 const payloadSchema = z.object({
   reason: z.string().trim().min(1).max(500)
@@ -21,7 +21,17 @@ export default defineEventHandler(async (event) => {
   }
   const parsed = payloadSchema.safeParse(await readBody(event))
   if (!parsed.success) {
-    throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
   }
 
   const db = await useDb()

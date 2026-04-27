@@ -1,9 +1,9 @@
 import { and, eq } from 'drizzle-orm'
-import { resourceVersions, resources } from '../../../../../../database/schema'
-import { getCurrentUser } from '../../../../../../utils/auth'
-import { useDb } from '../../../../../../utils/db'
-import { canManageResourceByTeam } from '../../../../../../utils/resourceTeam'
-import { resolveUserGroupClaims } from '../../../../../../utils/userGroupClaims'
+import { resourceVersions, resources } from '../../../../../database/schema'
+import { getCurrentUser } from '../../../../../utils/auth'
+import { useDb } from '../../../../../utils/db'
+import { canManageResourceByTeam } from '../../../../../utils/resourceTeam'
+import { resolveUserGroupClaims } from '../../../../../utils/userGroupClaims'
 
 export default defineEventHandler(async (event) => {
   const resourceId = getRouterParam(event, 'id')

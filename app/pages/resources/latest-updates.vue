@@ -70,7 +70,7 @@ function updateTypeLabel(type: string) {
           <div class="min-w-0">
             <div class="font-medium">
               <NuxtLink
-                :to="`/${log.resourceCategoryKey}/${log.resourceId}`"
+                :to="`/resources/${log.resourceId}`"
                 class="hover:underline"
               >
                 {{ log.resourceTitle }}

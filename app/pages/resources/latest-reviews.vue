@@ -66,7 +66,7 @@ const total = computed(() => Number(data.value?.total ?? 0))
           <div class="min-w-0">
             <div class="font-medium">
               <NuxtLink
-                :to="`/${review.resourceCategoryKey}/${review.resourceId}`"
+                :to="`/resources/${review.resourceId}`"
                 class="hover:underline"
               >
                 {{ review.resourceTitle }}

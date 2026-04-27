@@ -5,8 +5,11 @@ const route = useRoute()
 const auth = useAuth()
 const toast = useToast()
 
+definePageMeta({
+  path: '/resources/:id(\\d+)/reviews'
+})
+
 const id = computed(() => String(route.params.id || ''))
-const category = computed(() => String(route.params.category || ''))
 const page = ref(1)
 const pageSize = ref(20)
 const rating = ref<'all' | '1' | '2' | '3' | '4' | '5'>('all')
@@ -57,6 +60,11 @@ const items = computed(() => data.value?.items ?? [])
 const total = computed(() => Number(data.value?.total ?? 0))
 const reviewReplyForms = reactive<Record<number, string>>({})
 
+type ReviewPageValidationError = {
+  path?: string
+  message?: string
+}
+
 const ratingItems = computed(() => [
   { label: t('resources.review_filter_rating_all'), value: 'all' },
   { label: '5 ★', value: '5' },
@@ -76,26 +84,67 @@ watch([rating, order, direction], () => {
   page.value = 1
 })
 
+function getReviewPageErrorMessage(error: unknown, fallback: string) {
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: ReviewPageValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const pathMap: Record<string, string> = {
+      reason: t('resources.review_report'),
+      message: t('resources.review_reply_submit')
+    }
+    const path = String(first?.path || '')
+    const label = pathMap[path] || ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  const statusMessage = maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message
+  if (!statusMessage) return fallback
+
+  const statusMap: Record<string, string> = {
+    'Cannot report your own review': t('resources.error_cannot_report_own_review'),
+    'Managers cannot report this review': t('resources.error_managers_cannot_report_review')
+  }
+  return statusMap[statusMessage] || statusMessage
+}
+
 async function reportReview(reviewId: number) {
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.review_report_login_required'), color: 'error' })
     return
   }
   const reason = window.prompt(t('resources.review_report_prompt'))
   if (!reason || !reason.trim()) return
+  if (reason.trim().length > 500) {
+    toast.add({ title: t('common.error'), description: t('validation.max_length_label', { label: t('resources.review_report'), max: 500 }), color: 'error' })
+    return
+  }
   try {
     await $fetch(`/api/resources/${id.value}/reviews/${reviewId}/report`, {
       method: 'POST',
       body: { reason: reason.trim() }
     })
     toast.add({ title: t('common.success'), description: t('resources.review_reported'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.review_report_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewPageErrorMessage(error, t('resources.review_report_failed')), color: 'error' })
   }
 }
 
 async function toggleReviewLike(reviewId: number) {
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.review_like_login_required'), color: 'error' })
     return
   }
@@ -109,7 +158,14 @@ async function toggleReviewLike(reviewId: number) {
 
 async function submitReviewReply(reviewId: number) {
   const message = String(reviewReplyForms[reviewId] ?? '').trim()
-  if (!message) return
+  if (!message) {
+    toast.add({ title: t('common.error'), description: t('validation.required_label', { label: t('resources.review_reply_submit') }), color: 'error' })
+    return
+  }
+  if (message.length > 5000) {
+    toast.add({ title: t('common.error'), description: t('validation.max_length_label', { label: t('resources.review_reply_submit'), max: 5000 }), color: 'error' })
+    return
+  }
   try {
     await $fetch(`/api/resources/${id.value}/reviews/${reviewId}/reply`, {
       method: 'POST',
@@ -118,8 +174,8 @@ async function submitReviewReply(reviewId: number) {
     reviewReplyForms[reviewId] = ''
     await refreshNuxtData('resource-reviews-page')
     toast.add({ title: t('common.success'), description: t('resources.review_reply_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.review_reply_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewPageErrorMessage(error, t('resources.review_reply_save_failed')), color: 'error' })
   }
 }
 
@@ -148,7 +204,7 @@ async function deleteReviewReply(reviewId: number) {
       <UButton
         color="neutral"
         variant="outline"
-        :to="`/${category}/${id}`"
+        :to="`/resources/${id}`"
         icon="i-lucide-arrow-left"
       >
         {{ t('resources.back') }}
@@ -207,7 +263,7 @@ async function deleteReviewReply(reviewId: number) {
           <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between gap-2">
               <NuxtLink
-                :to="`/${category}/${id}/review/${r.id}`"
+                :to="`/resources/${id}/review/${r.id}`"
                 class="font-semibold hover:underline"
               >
                 {{ r.userName }}

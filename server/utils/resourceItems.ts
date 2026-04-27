@@ -46,7 +46,8 @@ export async function getResourceListPage(filters?: ResourceListFilters): Promis
         conds.push(sql`JSON_CONTAINS(${resources.tags}, JSON_QUOTE(${tag}))`)
       } else {
         // sqlite json stored as text; fallback to substring match on JSON string
-        conds.push(like(resources.tags as unknown as string, `%"${tag.replace(/"/g, '')}"%`))
+        const pattern = `%"${tag.replace(/"/g, '')}"%`
+        conds.push(sql`${resources.tags} LIKE ${pattern}`)
       }
     }
   }

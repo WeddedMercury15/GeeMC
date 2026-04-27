@@ -10,7 +10,7 @@ const locate = await $fetch<{
 }>(`/api/resources/versions/${versionId.value}/locate`)
 
 await navigateTo(
-  `/${locate.resourceCategoryKey}/${locate.resourceId}?tab=${encodeURIComponent(locate.tab)}#${locate.anchor}`,
+  `/resources/${locate.resourceId}?tab=${encodeURIComponent(locate.tab)}#${locate.anchor}`,
   { replace: true }
 )
 </script>

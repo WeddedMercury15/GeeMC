@@ -8,6 +8,10 @@ const { t } = useI18n()
 const { formatTime } = useFormatTime()
 const auth = useAuth()
 
+definePageMeta({
+  path: '/resources/:id(\\d+)'
+})
+
 const id = computed(() => String(route.params.id || ''))
 
 const { data: resourceData, error: resourceError } = await useAsyncData(
@@ -28,6 +32,9 @@ const isTeamMember = computed(() => {
   return teamMemberIds.value.includes(uid)
 })
 const canManageResource = computed(() => auth.canPublish.value && (isOwner.value || isTeamMember.value))
+const isManageMode = computed(() => route.query.manage === '1')
+const showManageUi = computed(() => canManageResource.value && isManageMode.value)
+const detailPath = computed(() => `/resources/${id.value}`)
 
 const updateForm = reactive({
   title: '',
@@ -101,6 +108,11 @@ const basicForm = reactive({
   tagsRaw: (resource.value?.tags ?? []).join(', ')
 })
 
+type ResourceMutationValidationError = {
+  path?: string
+  message?: string
+}
+
 const uploadVersionId = ref<number | null>(null)
 const uploadFileInput = ref<HTMLInputElement | null>(null)
 const pendingPickVersionId = ref<number | null>(null)
@@ -110,6 +122,197 @@ const draggingVersionFile = ref<{ versionId: number, fileId: number } | null>(nu
 const draftFileOrderByVersion = ref<Record<number, number[]>>({})
 const selectedVersionFileIds = ref<Record<number, number[]>>({})
 const bulkDeletingVersionId = ref<number | null>(null)
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function getResourceMutationErrorMessage(
+  error: unknown,
+  fallback: string,
+  pathMap: Record<string, string> = {},
+  statusMessageMap: Record<string, string> = {}
+) {
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: ResourceMutationValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const path = String(first?.path || '')
+    const label = pathMap[path]
+      || Object.entries(pathMap).find(([key]) => path === key || path.startsWith(`${key}.`))?.[1]
+      || ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  const statusMessage = maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message
+  if (!statusMessage) return fallback
+  return statusMessageMap[statusMessage] || statusMessage
+}
+
+function validateBasicForm() {
+  if (!basicForm.title.trim()) return t('validation.required_label', { label: t('resources.basic_title') })
+  if (basicForm.supportUrl.trim() && !isHttpUrl(basicForm.supportUrl.trim())) return t('validation.invalid_format_label', { label: t('resources.basic_support_url') })
+
+  if (basicForm.resourceType === 'external' || basicForm.resourceType === 'external_purchase') {
+    if (!basicForm.externalUrl.trim()) return t('validation.required_label', { label: t('resources.basic_external_url') })
+    if (!isHttpUrl(basicForm.externalUrl.trim())) return t('validation.invalid_format_label', { label: t('resources.basic_external_url') })
+  }
+
+  if (basicForm.externalPurchaseUrl.trim() && !isHttpUrl(basicForm.externalPurchaseUrl.trim())) {
+    return t('validation.invalid_format_label', { label: t('resources.basic_purchase_url') })
+  }
+
+  if (basicForm.currency.trim().length > 8) return t('validation.max_length_label', { label: t('resources.basic_currency'), max: 8 })
+
+  return null
+}
+
+function validateUpdateForm() {
+  if (!updateForm.message.trim()) return t('validation.required_label', { label: t('resources.update_message') })
+  if (updateForm.title.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_title'), max: 255 })
+  if (updateForm.versionString.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_version'), max: 255 })
+  return null
+}
+
+function validateEditUpdateForm() {
+  if (!editUpdateForm.message.trim()) return t('validation.required_label', { label: t('resources.update_message') })
+  if (editUpdateForm.title.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_title'), max: 255 })
+  if (editUpdateForm.versionString.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_version'), max: 255 })
+  return null
+}
+
+function validateVersionForm() {
+  if (!versionForm.name.trim()) return t('validation.required_label', { label: t('resources.publish.version_name') })
+  if (versionForm.name.trim().length > 255) return t('validation.max_length_label', { label: t('resources.publish.version_name'), max: 255 })
+  if (!versionForm.size.trim()) return t('validation.required_label', { label: t('resources.publish.size') })
+  if (versionForm.size.trim().length > 64) return t('validation.max_length_label', { label: t('resources.publish.size'), max: 64 })
+  if (!versionForm.updateMessage.trim()) return t('validation.required_label', { label: t('resources.update_message') })
+  if (versionForm.updateTitle.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_title'), max: 255 })
+  return null
+}
+
+function validateDescriptionForm() {
+  if (!editDescText.value.trim()) return t('validation.required_label', { label: t('resources.description') })
+  return null
+}
+
+function validateTeamMembersForm(usernames: string[]) {
+  if (usernames.length > 20) return t('validation.too_many_label', { label: t('resources.team_members'), max: 20 })
+  return null
+}
+
+function validateUrlField(label: string, value: string, { required = false, maxLength = 2048 }: { required?: boolean, maxLength?: number } = {}) {
+  const trimmed = value.trim()
+  if (required && !trimmed) return t('validation.required_label', { label })
+  if (!trimmed) return null
+  if (trimmed.length > maxLength) return t('validation.max_length_label', { label, max: maxLength })
+  if (!isHttpUrl(trimmed)) return t('validation.invalid_format_label', { label })
+  return null
+}
+
+function validateGalleryBulkItems() {
+  for (const item of galleryEditing.value) {
+    const urlMessage = validateUrlField(t('resources.gallery_image_url'), String(item.url || ''), { required: true })
+    if (urlMessage) return urlMessage
+    if (String(item.caption || '').trim().length > 255) return t('validation.max_length_label', { label: t('resources.gallery_caption'), max: 255 })
+  }
+  return null
+}
+
+function validateLinksBulkItems() {
+  for (const item of linksEditing.value) {
+    if (!String(item.label || '').trim()) return t('validation.required_label', { label: t('resources.link_label') })
+    if (String(item.label || '').trim().length > 255) return t('validation.max_length_label', { label: t('resources.link_label'), max: 255 })
+    const urlMessage = validateUrlField(t('resources.link_url'), String(item.url || ''), { required: true })
+    if (urlMessage) return urlMessage
+    if (!String(item.icon || '').trim()) return t('validation.required_label', { label: t('resources.link_icon') })
+    if (String(item.icon || '').trim().length > 255) return t('validation.max_length_label', { label: t('resources.link_icon'), max: 255 })
+  }
+  return null
+}
+
+function validateReasonInput(value: string, label: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return t('validation.required_label', { label })
+  if (trimmed.length > 500) return t('validation.max_length_label', { label, max: 500 })
+  return null
+}
+
+function validateReviewForm() {
+  if (!reviewForm.content.trim()) return t('validation.required_label', { label: t('resources.field_review_content') })
+  if (reviewForm.content.trim().length > 5000) return t('validation.max_length_label', { label: t('resources.field_review_content'), max: 5000 })
+  return null
+}
+
+function getDetailStateErrorMessage(error: unknown, fallback: string) {
+  return getResourceMutationErrorMessage(error, fallback, {
+    intent: t('admin.notifications_page.field_action'),
+    reason: t('admin.resources_page.field_reason')
+  })
+}
+
+function getMediaMutationErrorMessage(error: unknown, fallback: string) {
+  return getResourceMutationErrorMessage(error, fallback, {
+    cover: t('resources.media_cover_url'),
+    icon: t('resources.media_icon_url'),
+    url: t('resources.gallery_image_url'),
+    caption: t('resources.gallery_caption'),
+    items: t('resources.gallery_manage')
+  }, {
+    'Missing url': t('resources.error_missing_image_url'),
+    'Missing id': t('resources.error_missing_image'),
+    'Missing id(s)': t('resources.error_missing_image')
+  })
+}
+
+function getLinksMutationErrorMessage(error: unknown, fallback: string) {
+  return getResourceMutationErrorMessage(error, fallback, {
+    label: t('resources.link_label'),
+    url: t('resources.link_url'),
+    icon: t('resources.link_icon'),
+    id: t('resources.related_links'),
+    ids: t('resources.related_links'),
+    items: t('resources.related_links')
+  }, {
+    'Missing fields': t('resources.error_missing_required_fields'),
+    'Missing id(s)': t('resources.error_missing_link')
+  })
+}
+
+function getReviewMutationErrorMessage(error: unknown, fallback: string) {
+  return getResourceMutationErrorMessage(error, fallback, {
+    rating: t('resources.review_filter_rating'),
+    content: t('resources.field_review_content'),
+    message: t('resources.field_reply_content'),
+    reason: t('resources.field_report_reason')
+  }, {
+    'Resource is not reviewable': t('resources.error_resource_not_reviewable'),
+    'Managers cannot review this resource': t('resources.error_managers_cannot_review'),
+    'Managers cannot report this review': t('resources.error_managers_cannot_report_review'),
+    'Managers cannot report this update': t('resources.error_managers_cannot_report_update'),
+    'Managers cannot report this version': t('resources.error_managers_cannot_report_version'),
+    'Cannot report your own review': t('resources.error_cannot_report_own_review'),
+    'Review action is rate-limited, try again later': t('resources.error_rate_limited')
+  })
+}
 
 function isFileActionLoading(versionId: number, fileId: number) {
   const v = fileActionLoading.value
@@ -194,6 +397,26 @@ function resolveApiErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
+function getVersionFileActionErrorMessage(error: unknown, fallback: string) {
+  return getResourceMutationErrorMessage(error, fallback, {
+    action: t('admin.notifications_page.field_action'),
+    fileId: t('resources.error_missing_file_id'),
+    displayName: t('resources.upload_file'),
+    orderedIds: t('resources.error_missing_order_data'),
+    id: t('resources.error_missing_file_id'),
+    ids: t('resources.error_missing_file_id')
+  }, {
+    'Missing fields': t('resources.error_missing_required_fields'),
+    'Missing fileId': t('resources.error_missing_file_id'),
+    'Missing orderedIds': t('resources.error_missing_order_data'),
+    'Missing id(s)': t('resources.error_missing_file_id'),
+    'Missing file': t('resources.error_missing_file'),
+    'Empty file': t('validation.required_label', { label: t('resources.upload_file') }),
+    'file too large': t('resources.error_file_too_large'),
+    'File not found': t('resources.error_file_not_found')
+  })
+}
+
 function pickFileForVersion(versionId: number) {
   pendingPickVersionId.value = versionId
   uploadFileInput.value?.click()
@@ -221,7 +444,7 @@ async function uploadVersionFile(versionId: number) {
   } catch (error) {
     toast.add({
       title: t('common.error'),
-      description: resolveApiErrorMessage(error, t('resources.file_upload_failed')),
+      description: getVersionFileActionErrorMessage(error, t('resources.file_upload_failed')),
       color: 'error'
     })
   } finally {
@@ -250,8 +473,8 @@ async function deleteVersionFile(versionId: number, fileId: number) {
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.file_deleted'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.file_delete_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getVersionFileActionErrorMessage(error, t('resources.file_delete_failed')), color: 'error' })
   } finally {
     uploadingFile.value = false
     fileActionLoading.value = null
@@ -282,8 +505,8 @@ async function setPrimaryVersionFile(versionId: number, fileId: number) {
       body: { action: 'set_primary', fileId }
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.file_primary_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getVersionFileActionErrorMessage(error, t('resources.file_primary_failed')), color: 'error' })
   } finally {
     fileActionLoading.value = null
   }
@@ -294,6 +517,10 @@ async function renameVersionFile(versionId: number, fileId: number, currentName:
   if (!resource.value?.id) return
   const next = prompt(t('resources.file_rename_prompt'), currentName)
   if (!next?.trim()) return
+  if (next.trim().length > 255) {
+    toast.add({ title: t('common.error'), description: t('validation.max_length_label', { label: t('resources.upload_file'), max: 255 }), color: 'error' })
+    return
+  }
   fileActionLoading.value = { versionId, fileId, action: 'rename' }
   try {
     await $fetch(`/api/resources/${resource.value.id}/versions/${versionId}/files/manage`, {
@@ -301,8 +528,8 @@ async function renameVersionFile(versionId: number, fileId: number, currentName:
       body: { action: 'rename', fileId, displayName: next.trim() }
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.file_rename_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getVersionFileActionErrorMessage(error, t('resources.file_rename_failed')), color: 'error' })
   } finally {
     fileActionLoading.value = null
   }
@@ -327,8 +554,8 @@ async function moveVersionFile(version: ResourceVersion, fileId: number, directi
       body: { action: 'reorder', orderedIds: files.map(f => Number(f.id)) }
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.file_reorder_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getVersionFileActionErrorMessage(error, t('resources.file_reorder_failed')), color: 'error' })
   }
 }
 
@@ -403,8 +630,8 @@ async function saveVersionFileOrder(version: ResourceVersion) {
     clearDraftOrder(Number(version.id))
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.file_reordered'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.file_reorder_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getVersionFileActionErrorMessage(error, t('resources.file_reorder_failed')), color: 'error' })
   } finally {
     uploadingFile.value = false
   }
@@ -450,8 +677,8 @@ async function bulkDeleteVersionFiles(versionId: number) {
     selectedVersionFileIds.value = { ...selectedVersionFileIds.value, [Number(versionId)]: [] }
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.file_deleted_selected'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.file_delete_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getVersionFileActionErrorMessage(error, t('resources.file_delete_failed')), color: 'error' })
   } finally {
     bulkDeletingVersionId.value = null
     uploadingFile.value = false
@@ -488,7 +715,7 @@ async function onPickedReplaceFile() {
   } catch (error) {
     toast.add({
       title: t('common.error'),
-      description: resolveApiErrorMessage(error, t('resources.file_replace_failed')),
+      description: getVersionFileActionErrorMessage(error, t('resources.file_replace_failed')),
       color: 'error'
     })
   } finally {
@@ -526,47 +753,57 @@ async function restoreUpdate(updateId: number | undefined) {
 async function reportUpdate(updateId: number | undefined) {
   const idNum = Number(updateId)
   if (!Number.isFinite(idNum) || idNum <= 0) return
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.update_report_login_required'), color: 'error' })
     return
   }
   const reason = window.prompt(t('resources.update_report_prompt'))
   if (!reason || !reason.trim()) return
+  const validationMessage = validateReasonInput(reason, t('resources.field_report_reason'))
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   try {
     await $fetch(`/api/resources/${id.value}/updates/${idNum}/report`, {
       method: 'POST',
       body: { reason: reason.trim() }
     })
     toast.add({ title: t('common.success'), description: t('resources.update_reported'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.update_report_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewMutationErrorMessage(error, t('resources.update_report_failed')), color: 'error' })
   }
 }
 
 async function reportVersion(versionId: number | undefined) {
   const idNum = Number(versionId)
   if (!Number.isFinite(idNum) || idNum <= 0) return
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.version_report_login_required'), color: 'error' })
     return
   }
   const reason = window.prompt(t('resources.version_report_prompt'))
   if (!reason || !reason.trim()) return
+  const validationMessage = validateReasonInput(reason, t('resources.field_report_reason'))
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   try {
     await $fetch(`/api/resources/${id.value}/versions/${idNum}/report`, {
       method: 'POST',
       body: { reason: reason.trim() }
     })
     toast.add({ title: t('common.success'), description: t('resources.version_reported'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.version_report_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewMutationErrorMessage(error, t('resources.version_report_failed')), color: 'error' })
   }
 }
 
 async function voteUpdate(updateId: number | undefined) {
   const idNum = Number(updateId)
   if (!Number.isFinite(idNum) || idNum <= 0) return
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.update_vote_login_required'), color: 'error' })
     return
   }
@@ -579,6 +816,7 @@ async function voteUpdate(updateId: number | undefined) {
 }
 
 function openResourceStateConfirm(intent: 'hide' | 'restore' | 'delete') {
+  if (!showManageUi.value) return
   resourceStateIntent.value = intent
   resourceStateConfirmOpen.value = true
 }
@@ -606,8 +844,8 @@ async function submitResourceStateChange() {
     resourceStateConfirmOpen.value = false
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.resource_state_updated'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.resource_state_update_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getDetailStateErrorMessage(error, t('resources.resource_state_update_failed')), color: 'error' })
   } finally {
     submittingResourceState.value = false
   }
@@ -635,13 +873,18 @@ watchEffect(() => {
 
 async function saveCover() {
   if (!canManageResource.value) return
+  const validationMessage = validateUrlField(t('resources.media_cover_url'), mediaCoverInput.value, { required: true })
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   mediaSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/media/cover.update`, { method: 'POST', body: { cover: mediaCoverInput.value } })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.media_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.media_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getMediaMutationErrorMessage(error, t('resources.media_save_failed')), color: 'error' })
   } finally {
     mediaSubmitting.value = false
   }
@@ -675,13 +918,18 @@ async function uploadCover() {
 
 async function saveIcon() {
   if (!canManageResource.value) return
+  const validationMessage = validateUrlField(t('resources.media_icon_url'), mediaIconInput.value, { required: true })
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   mediaSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/media/icon.update`, { method: 'POST', body: { icon: mediaIconInput.value } })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.media_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.media_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getMediaMutationErrorMessage(error, t('resources.media_save_failed')), color: 'error' })
   } finally {
     mediaSubmitting.value = false
   }
@@ -741,7 +989,15 @@ async function uploadGallery() {
 }
 async function addGalleryItem() {
   if (!canManageResource.value) return
-  if (!galleryNewUrl.value.trim()) return
+  const urlMessage = validateUrlField(t('resources.gallery_image_url'), galleryNewUrl.value, { required: true })
+  if (urlMessage) {
+    toast.add({ title: t('common.error'), description: urlMessage, color: 'error' })
+    return
+  }
+  if (galleryNewCaption.value.trim().length > 255) {
+    toast.add({ title: t('common.error'), description: t('validation.max_length_label', { label: t('resources.gallery_caption'), max: 255 }), color: 'error' })
+    return
+  }
   mediaSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/media/gallery.manage`, {
@@ -752,8 +1008,8 @@ async function addGalleryItem() {
     galleryNewCaption.value = ''
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.gallery_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.gallery_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getMediaMutationErrorMessage(error, t('resources.gallery_save_failed')), color: 'error' })
   } finally {
     mediaSubmitting.value = false
   }
@@ -761,6 +1017,11 @@ async function addGalleryItem() {
 
 async function saveGalleryBulk() {
   if (!canManageResource.value) return
+  const validationMessage = validateGalleryBulkItems()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   mediaSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/media/gallery.manage`, {
@@ -769,8 +1030,8 @@ async function saveGalleryBulk() {
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.gallery_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.gallery_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getMediaMutationErrorMessage(error, t('resources.gallery_save_failed')), color: 'error' })
   } finally {
     mediaSubmitting.value = false
   }
@@ -778,7 +1039,23 @@ async function saveGalleryBulk() {
 
 async function addLinkItem() {
   if (!canManageResource.value) return
-  if (!linkNewLabel.value.trim() || !linkNewUrl.value.trim()) return
+  if (!linkNewLabel.value.trim()) {
+    toast.add({ title: t('common.error'), description: t('validation.required_label', { label: t('resources.link_label') }), color: 'error' })
+    return
+  }
+  if (linkNewLabel.value.trim().length > 255) {
+    toast.add({ title: t('common.error'), description: t('validation.max_length_label', { label: t('resources.link_label'), max: 255 }), color: 'error' })
+    return
+  }
+  const urlMessage = validateUrlField(t('resources.link_url'), linkNewUrl.value, { required: true })
+  if (urlMessage) {
+    toast.add({ title: t('common.error'), description: urlMessage, color: 'error' })
+    return
+  }
+  if (!linkNewIcon.value.trim()) {
+    toast.add({ title: t('common.error'), description: t('validation.required_label', { label: t('resources.link_icon') }), color: 'error' })
+    return
+  }
   linksSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/links/manage`, {
@@ -790,8 +1067,8 @@ async function addLinkItem() {
     linkNewIcon.value = 'i-lucide-link'
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.links_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.links_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getLinksMutationErrorMessage(error, t('resources.links_save_failed')), color: 'error' })
   } finally {
     linksSubmitting.value = false
   }
@@ -799,6 +1076,11 @@ async function addLinkItem() {
 
 async function saveLinksBulk() {
   if (!canManageResource.value) return
+  const validationMessage = validateLinksBulkItems()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   linksSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/links/manage`, {
@@ -807,8 +1089,8 @@ async function saveLinksBulk() {
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.links_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.links_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getLinksMutationErrorMessage(error, t('resources.links_save_failed')), color: 'error' })
   } finally {
     linksSubmitting.value = false
   }
@@ -823,6 +1105,11 @@ function parseTagsRaw(raw: string) {
 
 async function saveBasic() {
   if (!canManageResource.value) return
+  const validationMessage = validateBasicForm()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   basicSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/basic/manage`, {
@@ -842,14 +1129,38 @@ async function saveBasic() {
     basicEditOpen.value = false
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.basic_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.basic_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({
+      title: t('common.error'),
+      description: getResourceMutationErrorMessage(error, t('resources.basic_save_failed'), {
+        title: t('resources.basic_title'),
+        tagLine: t('resources.basic_tagline'),
+        supportUrl: t('resources.basic_support_url'),
+        externalUrl: t('resources.basic_external_url'),
+        externalPurchaseUrl: t('resources.basic_purchase_url'),
+        price: t('resources.basic_price'),
+        currency: t('resources.basic_currency'),
+        tags: t('resources.basic_tags')
+      }, {
+        'Invalid category': t('resources.basic_save_failed'),
+        'Category does not allow local download resources': t('resources.error_category_no_local'),
+        'Category does not allow external resources': t('resources.error_category_no_external'),
+        'Category does not allow paid external resources': t('resources.error_category_no_paid_external'),
+        'Category does not allow fileless resources': t('resources.error_category_no_fileless')
+      }),
+      color: 'error'
+    })
   } finally {
     basicSubmitting.value = false
   }
 }
 async function submitUpdate() {
   if (!canManageResource.value) return
+  const validationMessage = validateUpdateForm()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   submittingUpdate.value = true
   try {
     await $fetch(`/api/resources/${id.value}/updates/create`, {
@@ -862,14 +1173,24 @@ async function submitUpdate() {
     updateForm.message = ''
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.update_published'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.update_publish_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({
+      title: t('common.error'),
+      description: getResourceMutationErrorMessage(error, t('resources.update_publish_failed'), {
+        title: t('resources.update_title'),
+        versionString: t('resources.update_version'),
+        updateType: t('resources.update_type'),
+        message: t('resources.update_message')
+      }),
+      color: 'error'
+    })
   } finally {
     submittingUpdate.value = false
   }
 }
 
 function openEditUpdate(log: any) {
+  if (!showManageUi.value) return
   editUpdateId.value = Number(log?.id)
   editUpdateForm.title = log?.title ?? ''
   editUpdateForm.versionString = log?.version ?? ''
@@ -881,6 +1202,11 @@ function openEditUpdate(log: any) {
 async function submitEditUpdate() {
   if (!canManageResource.value) return
   if (!editUpdateId.value) return
+  const validationMessage = validateEditUpdateForm()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   submittingEditUpdate.value = true
   try {
     await $fetch(`/api/resources/${id.value}/updates/${editUpdateId.value}/update`, {
@@ -895,14 +1221,27 @@ async function submitEditUpdate() {
     editUpdateOpen.value = false
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.update_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.update_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({
+      title: t('common.error'),
+      description: getResourceMutationErrorMessage(error, t('resources.update_save_failed'), {
+        title: t('resources.update_title'),
+        versionString: t('resources.update_version'),
+        updateType: t('resources.update_type'),
+        message: t('resources.update_message')
+      }, {
+        'Update is not editable': t('resources.error_update_not_editable'),
+        'Description updates are immutable': t('resources.error_description_update_immutable')
+      }),
+      color: 'error'
+    })
   } finally {
     submittingEditUpdate.value = false
   }
 }
 
 function openDeleteUpdate(updateId: number | undefined) {
+  if (!showManageUi.value) return
   const idNum = Number(updateId)
   if (!Number.isFinite(idNum) || idNum <= 0) return
   deleteUpdateId.value = idNum
@@ -932,6 +1271,11 @@ function parseCsv(raw: string): string[] {
 
 async function submitVersion() {
   if (!canManageResource.value) return
+  const validationMessage = validateVersionForm()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   submittingVersion.value = true
   try {
     await $fetch(`/api/resources/${id.value}/versions/create`, {
@@ -959,8 +1303,22 @@ async function submitVersion() {
     versionForm.updateType = 'release'
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.version_published'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.version_publish_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({
+      title: t('common.error'),
+      description: getResourceMutationErrorMessage(error, t('resources.version_publish_failed'), {
+        name: t('resources.publish.version_name'),
+        type: t('resources.version_type_release'),
+        size: t('resources.publish.size'),
+        gameVersions: t('resources.publish.game_versions'),
+        loaders: t('resources.publish.loaders'),
+        serverTypes: t('resources.publish.server_types'),
+        updateTitle: t('resources.update_title'),
+        updateMessage: t('resources.update_message'),
+        updateType: t('resources.update_type')
+      }),
+      color: 'error'
+    })
   } finally {
     submittingVersion.value = false
   }
@@ -968,6 +1326,11 @@ async function submitVersion() {
 
 async function submitDescription() {
   if (!canManageResource.value) return
+  const validationMessage = validateDescriptionForm()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   submittingDesc.value = true
   try {
     await $fetch(`/api/resources/${id.value}/description/update`, {
@@ -977,8 +1340,14 @@ async function submitDescription() {
     editDescOpen.value = false
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.description_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.description_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({
+      title: t('common.error'),
+      description: getResourceMutationErrorMessage(error, t('resources.description_save_failed'), {
+        message: t('resources.description')
+      }),
+      color: 'error'
+    })
   } finally {
     submittingDesc.value = false
   }
@@ -1032,6 +1401,25 @@ const isFilelessResource = computed(() => resource.value?.resourceType === 'file
 
 const activeTab = ref<'description' | 'gallery' | 'versions' | 'changelog' | 'reviews'>('description')
 
+function closeAllDetailModals() {
+  downloadModalOpen.value = false
+  editDescOpen.value = false
+  editUpdateOpen.value = false
+  deleteUpdateOpen.value = false
+  resourceStateConfirmOpen.value = false
+  basicEditOpen.value = false
+}
+
+function openBasicEditModal() {
+  if (!showManageUi.value) return
+  basicEditOpen.value = true
+}
+
+function openEditDescriptionModal() {
+  if (!showManageUi.value) return
+  editDescOpen.value = true
+}
+
 async function applyRouteTabAndHash() {
   const tab = typeof route.query.tab === 'string' ? route.query.tab : ''
   if (tab === 'description' || tab === 'gallery' || tab === 'versions' || tab === 'changelog' || tab === 'reviews') {
@@ -1057,6 +1445,26 @@ watch(
   () => [route.query.tab, route.hash],
   () => {
     void applyRouteTabAndHash()
+  }
+)
+
+watch(
+  () => route.fullPath,
+  () => {
+    closeAllDetailModals()
+  }
+)
+
+watch(
+  showManageUi,
+  (enabled) => {
+    if (!enabled) {
+      editDescOpen.value = false
+      editUpdateOpen.value = false
+      deleteUpdateOpen.value = false
+      resourceStateConfirmOpen.value = false
+      basicEditOpen.value = false
+    }
   }
 )
 
@@ -1107,27 +1515,43 @@ watchEffect(() => {
 
 async function saveTeamMembers() {
   if (!isOwner.value && !auth.canAdmin.value) return
+  const usernames = teamMemberNamesInput.value
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean)
+  const validationMessage = validateTeamMembersForm(usernames)
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   submittingTeamMembers.value = true
   try {
-    const usernames = teamMemberNamesInput.value
-      .split(',')
-      .map(x => x.trim())
-      .filter(Boolean)
     await $fetch(`/api/resources/${id.value}/team/manage`, {
       method: 'POST',
       body: { usernames }
     })
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.team_members_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.team_members_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({
+      title: t('common.error'),
+      description: getResourceMutationErrorMessage(error, t('resources.team_members_save_failed'), {
+        usernames: t('resources.team_members')
+      }),
+      color: 'error'
+    })
   } finally {
     submittingTeamMembers.value = false
   }
 }
 
 async function submitReview() {
-  if (!canSubmitReview.value || !reviewForm.content.trim()) return
+  if (!canSubmitReview.value) return
+  const validationMessage = validateReviewForm()
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   reviewSubmitting.value = true
   try {
     await $fetch(`/api/resources/${id.value}/reviews/create`, {
@@ -1140,15 +1564,15 @@ async function submitReview() {
     reviewForm.content = ''
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.review_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.review_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewMutationErrorMessage(error, t('resources.review_save_failed')), color: 'error' })
   } finally {
     reviewSubmitting.value = false
   }
 }
 
 async function likeReview(reviewId: number) {
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.review_like_login_required'), color: 'error' })
     return
   }
@@ -1181,26 +1605,38 @@ async function restoreReview(reviewId: number) {
 }
 
 async function reportReview(reviewId: number) {
-  if (!auth.loggedIn.value) {
+  if (!auth.isLoggedIn.value) {
     toast.add({ title: t('common.error'), description: t('resources.review_report_login_required'), color: 'error' })
     return
   }
   const reason = window.prompt(t('resources.review_report_prompt'))
   if (!reason || !reason.trim()) return
+  const validationMessage = validateReasonInput(reason, t('resources.field_report_reason'))
+  if (validationMessage) {
+    toast.add({ title: t('common.error'), description: validationMessage, color: 'error' })
+    return
+  }
   try {
     await $fetch(`/api/resources/${id.value}/reviews/${reviewId}/report`, {
       method: 'POST',
       body: { reason: reason.trim() }
     })
     toast.add({ title: t('common.success'), description: t('resources.review_reported'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.review_report_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewMutationErrorMessage(error, t('resources.review_report_failed')), color: 'error' })
   }
 }
 
 async function submitReviewReply(reviewId: number) {
   const message = String(reviewReplyForms[reviewId] ?? '').trim()
-  if (!message) return
+  if (!message) {
+    toast.add({ title: t('common.error'), description: t('validation.required_label', { label: t('resources.field_reply_content') }), color: 'error' })
+    return
+  }
+  if (message.length > 5000) {
+    toast.add({ title: t('common.error'), description: t('validation.max_length_label', { label: t('resources.field_reply_content'), max: 5000 }), color: 'error' })
+    return
+  }
   try {
     await $fetch(`/api/resources/${id.value}/reviews/${reviewId}/reply`, {
       method: 'POST',
@@ -1209,8 +1645,8 @@ async function submitReviewReply(reviewId: number) {
     reviewReplyForms[reviewId] = ''
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.review_reply_saved'), color: 'success' })
-  } catch {
-    toast.add({ title: t('common.error'), description: t('resources.review_reply_save_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getReviewMutationErrorMessage(error, t('resources.review_reply_save_failed')), color: 'error' })
   }
 }
 
@@ -1495,6 +1931,15 @@ useSeoMeta({
       : t('common.site_name'),
   description: () => resource.value?.description || ''
 })
+
+const openManagePage = () => {
+  closeAllDetailModals()
+  void navigateTo(`/resources/manage/${id.value}`)
+}
+const leaveManagePage = () => {
+  closeAllDetailModals()
+  void navigateTo(detailPath.value)
+}
 </script>
 
 <template>
@@ -1598,42 +2043,6 @@ useSeoMeta({
             </div>
 
             <div class="w-full md:w-72">
-              <div class="grid grid-cols-3 gap-3 mb-3">
-                <UCard
-                  class="text-center"
-                  :ui="{ body: 'py-3' }"
-                >
-                  <div class="text-lg font-bold">
-                    {{ downloadsCount }}
-                  </div>
-                  <div class="text-xs text-muted">
-                    {{ t('resources.stat_downloads') }}
-                  </div>
-                </UCard>
-                <UCard
-                  class="text-center"
-                  :ui="{ body: 'py-3' }"
-                >
-                  <div class="text-lg font-bold">
-                    {{ resource!.viewCount ?? 0 }}
-                  </div>
-                  <div class="text-xs text-muted">
-                    {{ t('resources.stat_views') }}
-                  </div>
-                </UCard>
-                <UCard
-                  class="text-center"
-                  :ui="{ body: 'py-3' }"
-                >
-                  <div class="text-lg font-bold">
-                    {{ followersCount }}
-                  </div>
-                  <div class="text-xs text-muted">
-                    {{ t('resources.stat_followers') }}
-                  </div>
-                </UCard>
-              </div>
-
               <div class="flex flex-col gap-2">
                 <UButton
                   v-if="isDownloadableResource"
@@ -1675,12 +2084,22 @@ useSeoMeta({
                   {{ t('resources.fileless_action') }}
                 </UButton>
                 <UButton
-                  v-if="canManageResource"
+                  v-if="canManageResource && !isManageMode"
                   color="neutral"
                   variant="outline"
                   size="lg"
                   icon="i-lucide-settings"
-                  @click="basicEditOpen = true"
+                  @click="openManagePage"
+                >
+                  {{ t('resources.edit_basic') }}
+                </UButton>
+                <UButton
+                  v-if="showManageUi"
+                  color="neutral"
+                  variant="outline"
+                  size="lg"
+                  icon="i-lucide-pencil"
+                  @click="openBasicEditModal"
                 >
                   {{ t('resources.edit_basic') }}
                 </UButton>
@@ -1694,7 +2113,7 @@ useSeoMeta({
                   {{ isFollowed ? t('resources.following') : t('resources.follow') }}
                 </UButton>
                 <UButton
-                  v-if="canManageResource && !isResourceDeleted && isResourceVisible"
+                  v-if="showManageUi && !isResourceDeleted && isResourceVisible"
                   color="warning"
                   variant="outline"
                   size="sm"
@@ -1704,7 +2123,7 @@ useSeoMeta({
                   {{ t('resources.hide_resource') }}
                 </UButton>
                 <UButton
-                  v-if="canManageResource && !isResourceVisible"
+                  v-if="showManageUi && !isResourceVisible"
                   color="success"
                   variant="outline"
                   size="sm"
@@ -1714,7 +2133,7 @@ useSeoMeta({
                   {{ t('resources.restore_resource') }}
                 </UButton>
                 <UButton
-                  v-if="canManageResource && !isResourceDeleted"
+                  v-if="showManageUi && !isResourceDeleted"
                   color="error"
                   variant="outline"
                   size="sm"
@@ -1722,6 +2141,16 @@ useSeoMeta({
                   @click="openResourceStateConfirm('delete')"
                 >
                   {{ t('resources.delete_resource') }}
+                </UButton>
+                <UButton
+                  v-if="showManageUi"
+                  color="neutral"
+                  variant="ghost"
+                  size="sm"
+                  icon="i-lucide-arrow-left"
+                  @click="leaveManagePage"
+                >
+                  {{ t('resources.back') }}
                 </UButton>
               </div>
             </div>
@@ -1732,25 +2161,24 @@ useSeoMeta({
 
     <div class="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div class="lg:col-span-9">
-        <UCard>
-          <UTabs
-            v-model="activeTab"
-            :items="tabItems"
-          >
+        <UTabs
+          v-model="activeTab"
+          :items="tabItems"
+        >
             <template #content="{ item }">
               <div
                 v-if="item.value === 'description'"
                 class="prose dark:prose-invert max-w-none"
               >
                 <div
-                  v-if="canManageResource"
+                  v-if="showManageUi"
                   class="not-prose mb-3 flex justify-end"
                 >
                   <UButton
                     color="neutral"
                     variant="outline"
                     icon="i-lucide-pencil"
-                    @click="editDescOpen = true"
+                    @click="openEditDescriptionModal"
                   >
                     {{ t('resources.edit_description') }}
                   </UButton>
@@ -1760,7 +2188,7 @@ useSeoMeta({
 
               <div v-else-if="item.value === 'gallery'">
                 <UCard
-                  v-if="canManageResource"
+                  v-if="showManageUi"
                   class="mb-4"
                 >
                   <div class="font-semibold mb-3">
@@ -1928,7 +2356,18 @@ useSeoMeta({
                   </div>
                 </UCard>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <UEmpty
+                  v-if="resource!.gallery.length === 0"
+                  icon="i-lucide-image-off"
+                  :title="t('resources.gallery_empty_title')"
+                  :description="t('resources.gallery_empty_desc')"
+                  class="py-8"
+                />
+
+                <div
+                  v-else
+                  class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+                >
                   <UCard
                     v-for="(img, idx) in resource!.gallery"
                     :key="idx"
@@ -1953,7 +2392,7 @@ useSeoMeta({
                   id="downloads-section"
                   class="flex flex-col gap-4"
                 >
-                  <UCard v-if="canManageResource">
+                  <UCard v-if="showManageUi">
                     <div class="font-semibold mb-3">
                       {{ t('resources.publish_version') }}
                     </div>
@@ -1988,8 +2427,8 @@ useSeoMeta({
                             { label: t('resources.version_type_release'), value: 'release' },
                             { label: t('resources.version_type_snapshot'), value: 'snapshot' }
                           ]"
-                          option-attribute="label"
-                          value-attribute="value"
+                          label-key="label"
+                          value-key="value"
                         />
                       </UFormField>
                       <UFormField :label="t('resources.publish.size')">
@@ -2017,8 +2456,8 @@ useSeoMeta({
                             { label: t('resources.version_type_release'), value: 'release' },
                             { label: t('resources.version_type_snapshot'), value: 'snapshot' }
                           ]"
-                          option-attribute="label"
-                          value-attribute="value"
+                          label-key="label"
+                          value-key="value"
                         />
                       </UFormField>
                     </div>
@@ -2037,7 +2476,7 @@ useSeoMeta({
                         :loading="submittingVersion"
                         @click="submitVersion"
                       >
-                        {{ t('resources.publish') }}
+                        {{ t('resources.publish_action') }}
                       </UButton>
                     </div>
                   </UCard>
@@ -2195,7 +2634,7 @@ useSeoMeta({
                             {{ t('resources.open_version_permalink') }}
                           </UButton>
                           <UButton
-                            v-if="canManageResource"
+                            v-if="showManageUi"
                             color="neutral"
                             variant="outline"
                             :loading="uploadingFile && uploadVersionId === v.id"
@@ -2221,7 +2660,7 @@ useSeoMeta({
                             {{ t('resources.download') }}
                           </UButton>
                           <UButton
-                            v-if="!canManageResource && auth.loggedIn.value"
+                            v-if="!showManageUi && auth.isLoggedIn.value"
                             color="warning"
                             variant="outline"
                             icon="i-lucide-flag"
@@ -2240,7 +2679,7 @@ useSeoMeta({
                           {{ t('resources.version_files') }}
                         </div>
                         <div
-                          v-if="canManageResource"
+                          v-if="showManageUi"
                           class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-(--ui-border) px-3 py-2"
                         >
                           <div class="flex items-center gap-3 text-xs text-muted">
@@ -2291,15 +2730,15 @@ useSeoMeta({
                             v-for="(f, _fileIdx) in getVersionFiles(v)"
                             :key="f.id"
                             class="flex items-center justify-between gap-2 border border-(--ui-border) rounded-md px-3 py-2"
-                            :class="canManageResource ? 'cursor-move' : ''"
-                            :draggable="canManageResource"
+                            :class="showManageUi ? 'cursor-move' : ''"
+                            :draggable="showManageUi"
                             @dragstart="onVersionFileDragStart(v.id, f.id)"
                             @dragover="onVersionFileDragOver"
                             @drop="onVersionFileDrop(v, f.id)"
                           >
                             <div class="min-w-0 flex items-center gap-2">
                               <input
-                                v-if="canManageResource"
+                                v-if="showManageUi"
                                 type="checkbox"
                                 :checked="isVersionFileSelected(v.id, f.id)"
                                 @change="toggleVersionFileSelected(v.id, f.id, (($event.target as HTMLInputElement)?.checked))"
@@ -2333,7 +2772,7 @@ useSeoMeta({
                                 {{ t('resources.download_file') }}
                               </UButton>
                               <UButton
-                                v-if="canManageResource && !f.isPrimary"
+                                v-if="showManageUi && !f.isPrimary"
                                 size="xs"
                                 color="neutral"
                                 variant="outline"
@@ -2344,7 +2783,7 @@ useSeoMeta({
                                 {{ t('resources.set_primary') }}
                               </UButton>
                               <UButton
-                                v-if="canManageResource"
+                                v-if="showManageUi"
                                 size="xs"
                                 color="neutral"
                                 variant="outline"
@@ -2355,7 +2794,7 @@ useSeoMeta({
                                 {{ t('resources.rename_file') }}
                               </UButton>
                               <UButton
-                                v-if="canManageResource"
+                                v-if="showManageUi"
                                 size="xs"
                                 color="neutral"
                                 variant="outline"
@@ -2365,7 +2804,7 @@ useSeoMeta({
                                 {{ t('resources.move_up') }}
                               </UButton>
                               <UButton
-                                v-if="canManageResource"
+                                v-if="showManageUi"
                                 size="xs"
                                 color="neutral"
                                 variant="outline"
@@ -2375,7 +2814,7 @@ useSeoMeta({
                                 {{ t('resources.move_down') }}
                               </UButton>
                               <UButton
-                                v-if="canManageResource"
+                                v-if="showManageUi"
                                 size="xs"
                                 color="neutral"
                                 variant="outline"
@@ -2386,7 +2825,7 @@ useSeoMeta({
                                 {{ t('resources.replace_file') }}
                               </UButton>
                               <UButton
-                                v-if="canManageResource"
+                                v-if="showManageUi"
                                 size="xs"
                                 color="error"
                                 variant="outline"
@@ -2407,7 +2846,7 @@ useSeoMeta({
 
               <div v-else-if="item.value === 'changelog'">
                 <UCard
-                  v-if="canManageResource"
+                  v-if="showManageUi"
                   class="mb-4"
                 >
                   <div class="font-semibold mb-3">
@@ -2431,8 +2870,8 @@ useSeoMeta({
                           { label: t('resources.version_type_release'), value: 'release' },
                           { label: t('resources.version_type_snapshot'), value: 'snapshot' }
                         ]"
-                        option-attribute="label"
-                        value-attribute="value"
+                        label-key="label"
+                        value-key="value"
                       />
                     </UFormField>
                     <div />
@@ -2452,12 +2891,13 @@ useSeoMeta({
                       :loading="submittingUpdate"
                       @click="submitUpdate"
                     >
-                      {{ t('resources.publish') }}
+                      {{ t('resources.publish_action') }}
                     </UButton>
                   </div>
                 </UCard>
                 <UEmpty
                   v-if="changelogGroups.length === 0"
+                  icon="i-lucide-scroll-text"
                   :title="t('resources.changelog_empty_title')"
                   :description="t('resources.changelog_empty_desc')"
                 />
@@ -2513,7 +2953,7 @@ useSeoMeta({
                             {{ log.voteCount ?? 0 }}
                           </UButton>
                           <UButton
-                            v-if="canManageResource && log.messageState !== 'deleted'"
+                            v-if="showManageUi && log.messageState !== 'deleted'"
                             size="xs"
                             color="neutral"
                             variant="outline"
@@ -2523,7 +2963,7 @@ useSeoMeta({
                             {{ t('resources.edit_update') }}
                           </UButton>
                           <UButton
-                            v-if="canManageResource && log.messageState !== 'deleted'"
+                            v-if="showManageUi && log.messageState !== 'deleted'"
                             size="xs"
                             color="error"
                             variant="outline"
@@ -2533,7 +2973,7 @@ useSeoMeta({
                             {{ t('resources.delete_update') }}
                           </UButton>
                           <UButton
-                            v-if="canManageResource && log.messageState === 'deleted'"
+                            v-if="showManageUi && log.messageState === 'deleted'"
                             size="xs"
                             color="primary"
                             variant="outline"
@@ -2543,7 +2983,7 @@ useSeoMeta({
                             {{ t('resources.restore_update') }}
                           </UButton>
                           <UButton
-                            v-if="!canManageResource && auth.loggedIn.value && log.messageState !== 'deleted'"
+                            v-if="!showManageUi && auth.isLoggedIn.value && log.messageState !== 'deleted'"
                             size="xs"
                             color="warning"
                             variant="outline"
@@ -2582,8 +3022,8 @@ useSeoMeta({
                         { label: `2 ★`, value: 2 },
                         { label: `1 ★`, value: 1 }
                       ]"
-                      option-attribute="label"
-                      value-attribute="value"
+                      label-key="label"
+                      value-key="value"
                     />
                     <UTextarea
                       v-model="reviewForm.content"
@@ -2602,6 +3042,7 @@ useSeoMeta({
                 </UCard>
                 <UEmpty
                   v-if="resource!.reviews.length === 0"
+                  icon="i-lucide-message-square-text"
                   :title="t('resources.reviews_empty_title')"
                   :description="t('resources.reviews_empty_desc')"
                 />
@@ -2615,14 +3056,14 @@ useSeoMeta({
                       color="neutral"
                       variant="outline"
                       icon="i-lucide-filter"
-                      :to="`/${resource!.categoryKey}/${resource!.id}/reviews`"
+                      :to="`/resources/${resource!.id}/reviews`"
                     >
                       {{ t('resources.review_open_filters_page') }}
                     </UButton>
                   </div>
                   <UCard
-                    :id="`review-${r.id}`"
                     v-for="r in resource!.reviews"
+                    :id="`review-${r.id}`"
                     :key="r.id"
                   >
                     <div class="flex items-start gap-3">
@@ -2630,7 +3071,7 @@ useSeoMeta({
                       <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
                           <NuxtLink
-                            :to="`/${resource!.categoryKey}/${resource!.id}/review/${r.id}`"
+                            :to="`/resources/${resource!.id}/review/${r.id}`"
                             class="font-semibold hover:underline"
                           >
                             {{ r.userName }}
@@ -2701,7 +3142,7 @@ useSeoMeta({
                             {{ r.reply.message }}
                           </div>
                           <div
-                            v-if="canManageResource || auth.canAdmin.value"
+                            v-if="showManageUi || auth.canAdmin.value"
                             class="mt-2 flex justify-end"
                           >
                             <UButton
@@ -2716,7 +3157,7 @@ useSeoMeta({
                           </div>
                         </div>
                         <div
-                          v-if="(canManageResource || auth.canAdmin.value)"
+                          v-if="(showManageUi || auth.canAdmin.value)"
                           class="mt-3 space-y-2"
                         >
                           <UTextarea
@@ -2741,18 +3182,53 @@ useSeoMeta({
                 </div>
               </div>
             </template>
-          </UTabs>
-        </UCard>
+        </UTabs>
       </div>
 
       <div class="lg:col-span-3">
         <div class="flex flex-col gap-4">
+          <div class="grid grid-cols-3 gap-3">
+            <UCard
+              class="aspect-square text-center"
+              :ui="{ body: 'h-full flex flex-col items-center justify-center p-2' }"
+            >
+              <div class="text-lg font-bold">
+                {{ downloadsCount }}
+              </div>
+              <div class="text-xs text-muted">
+                {{ t('resources.stat_downloads') }}
+              </div>
+            </UCard>
+            <UCard
+              class="aspect-square text-center"
+              :ui="{ body: 'h-full flex flex-col items-center justify-center p-2' }"
+            >
+              <div class="text-lg font-bold">
+                {{ resource!.viewCount ?? 0 }}
+              </div>
+              <div class="text-xs text-muted">
+                {{ t('resources.stat_views') }}
+              </div>
+            </UCard>
+            <UCard
+              class="aspect-square text-center"
+              :ui="{ body: 'h-full flex flex-col items-center justify-center p-2' }"
+            >
+              <div class="text-lg font-bold">
+                {{ followersCount }}
+              </div>
+              <div class="text-xs text-muted">
+                {{ t('resources.stat_followers') }}
+              </div>
+            </UCard>
+          </div>
+
           <UCard>
             <div class="text-sm font-semibold mb-2">
               {{ t('resources.related_links') }}
             </div>
             <div
-              v-if="canManageResource"
+              v-if="showManageUi"
               class="mb-3 space-y-3"
             >
               <div class="grid grid-cols-1 gap-2">
@@ -2856,7 +3332,7 @@ useSeoMeta({
               </UBadge>
             </div>
             <div
-              v-if="isOwner || auth.canAdmin"
+              v-if="isManageMode && (isOwner || auth.canAdmin)"
               class="space-y-2"
             >
               <UInput
@@ -2951,22 +3427,24 @@ useSeoMeta({
       </div>
     </div>
 
-    <UModal v-model:open="downloadModalOpen">
-      <UCard>
-        <template #header>
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold">
-              {{ t('resources.download_title', { title: resource!.title }) }}
-            </div>
-            <UButton
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              @click="downloadModalOpen = false"
-            />
+    <UModal
+      v-model:open="downloadModalOpen"
+      :ui="{ content: 'sm:max-w-2xl', body: 'max-h-[80vh] overflow-y-auto' }"
+    >
+      <template #header>
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-semibold">
+            {{ t('resources.download_title', { title: resource!.title }) }}
           </div>
-        </template>
-
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-x"
+            @click="downloadModalOpen = false"
+          />
+        </div>
+      </template>
+      <template #body>
         <div class="flex flex-col gap-3">
           <UButton
             color="success"
@@ -3085,25 +3563,27 @@ useSeoMeta({
             {{ hasAnyDownloadableFile ? t('resources.pick_version_manual') : t('resources.go_upload_files') }}
           </UButton>
         </div>
-      </UCard>
+      </template>
     </UModal>
 
-    <UModal v-model:open="editDescOpen">
-      <UCard>
-        <template #header>
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold">
-              {{ t('resources.edit_description') }}
-            </div>
-            <UButton
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              @click="editDescOpen = false"
-            />
+    <UModal
+      v-model:open="editDescOpen"
+      :ui="{ content: 'sm:max-w-xl', body: 'max-h-[80vh] overflow-y-auto' }"
+    >
+      <template #header>
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-semibold">
+            {{ t('resources.edit_description') }}
           </div>
-        </template>
-
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-x"
+            @click="editDescOpen = false"
+          />
+        </div>
+      </template>
+      <template #body>
         <div class="space-y-3">
           <UFormField :label="t('resources.description')">
             <UTextarea
@@ -3121,25 +3601,27 @@ useSeoMeta({
             </UButton>
           </div>
         </div>
-      </UCard>
+      </template>
     </UModal>
 
-    <UModal v-model:open="editUpdateOpen">
-      <UCard>
-        <template #header>
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold">
-              {{ t('resources.edit_update') }}
-            </div>
-            <UButton
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
-              @click="editUpdateOpen = false"
-            />
+    <UModal
+      v-model:open="editUpdateOpen"
+      :ui="{ content: 'sm:max-w-xl', body: 'max-h-[80vh] overflow-y-auto' }"
+    >
+      <template #header>
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-semibold">
+            {{ t('resources.edit_update') }}
           </div>
-        </template>
-
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-x"
+            @click="editUpdateOpen = false"
+          />
+        </div>
+      </template>
+      <template #body>
         <div class="space-y-3">
           <UFormField :label="t('resources.update_title')">
             <UInput v-model="editUpdateForm.title" />
@@ -3155,8 +3637,8 @@ useSeoMeta({
                 { label: t('resources.version_type_release'), value: 'release' },
                 { label: t('resources.version_type_snapshot'), value: 'snapshot' }
               ]"
-              option-attribute="label"
-              value-attribute="value"
+              label-key="label"
+              value-key="value"
             />
           </UFormField>
           <UFormField :label="t('resources.update_message')">
@@ -3175,16 +3657,19 @@ useSeoMeta({
             </UButton>
           </div>
         </div>
-      </UCard>
+      </template>
     </UModal>
 
-    <UModal v-model:open="deleteUpdateOpen">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            {{ t('resources.delete_update') }}
-          </div>
-        </template>
+    <UModal
+      v-model:open="deleteUpdateOpen"
+      :ui="{ content: 'sm:max-w-md' }"
+    >
+      <template #header>
+        <div class="font-semibold">
+          {{ t('resources.delete_update') }}
+        </div>
+      </template>
+      <template #body>
         <div class="space-y-4">
           <div class="text-sm text-(--ui-text-muted)">
             {{ t('resources.delete_update_confirm') }}
@@ -3206,16 +3691,19 @@ useSeoMeta({
             </UButton>
           </div>
         </div>
-      </UCard>
+      </template>
     </UModal>
 
-    <UModal v-model:open="resourceStateConfirmOpen">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            {{ resourceStateConfirmTitle }}
-          </div>
-        </template>
+    <UModal
+      v-model:open="resourceStateConfirmOpen"
+      :ui="{ content: 'sm:max-w-md' }"
+    >
+      <template #header>
+        <div class="font-semibold">
+          {{ resourceStateConfirmTitle }}
+        </div>
+      </template>
+      <template #body>
         <div class="space-y-4">
           <div class="text-sm text-(--ui-text-muted)">
             {{ resourceStateConfirmDesc }}
@@ -3237,15 +3725,19 @@ useSeoMeta({
             </UButton>
           </div>
         </div>
-      </UCard>
+      </template>
     </UModal>
-    <UModal v-model:open="basicEditOpen">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            {{ t('resources.edit_basic') }}
-          </div>
-        </template>
+
+    <UModal
+      v-model:open="basicEditOpen"
+      :ui="{ content: 'sm:max-w-2xl', body: 'max-h-[80vh] overflow-y-auto' }"
+    >
+      <template #header>
+        <div class="font-semibold">
+          {{ t('resources.edit_basic') }}
+        </div>
+      </template>
+      <template #body>
         <div class="space-y-3">
           <UFormField :label="t('resources.basic_title')">
             <UInput v-model="basicForm.title" />
@@ -3262,8 +3754,8 @@ useSeoMeta({
                 { label: t('resources.publish.type_external_purchase'), value: 'external_purchase' },
                 { label: t('resources.publish.type_fileless'), value: 'fileless' }
               ]"
-              option-attribute="label"
-              value-attribute="value"
+              label-key="label"
+              value-key="value"
             />
           </UFormField>
           <UFormField :label="t('resources.basic_support_url')">
@@ -3302,26 +3794,26 @@ useSeoMeta({
             />
           </UFormField>
         </div>
-        <template #footer>
-          <div class="flex justify-end gap-2">
-            <UButton
-              color="neutral"
-              variant="outline"
-              :disabled="basicSubmitting"
-              @click="basicEditOpen = false"
-            >
-              {{ t('common.cancel') }}
-            </UButton>
-            <UButton
-              color="primary"
-              :loading="basicSubmitting"
-              @click="saveBasic"
-            >
-              {{ t('resources.save_basic') }}
-            </UButton>
-          </div>
-        </template>
-      </UCard>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton
+            color="neutral"
+            variant="outline"
+            :disabled="basicSubmitting"
+            @click="basicEditOpen = false"
+          >
+            {{ t('common.cancel') }}
+          </UButton>
+          <UButton
+            color="primary"
+            :loading="basicSubmitting"
+            @click="saveBasic"
+          >
+            {{ t('resources.save_basic') }}
+          </UButton>
+        </div>
+      </template>
     </UModal>
   </UContainer>
 </template>

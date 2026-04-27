@@ -1,7 +1,10 @@
 <script setup lang="ts">
 const route = useRoute()
 
-const category = computed(() => String(route.params.category || ''))
+definePageMeta({
+  path: '/resources/:id(\\d+)/update/:updateId(\\d+)'
+})
+
 const resourceId = computed(() => String(route.params.id || ''))
 const updateId = computed(() => String(route.params.updateId || ''))
 
@@ -10,7 +13,7 @@ const locate = await $fetch<{ tab: string, anchor: string }>(
 )
 
 await navigateTo(
-  `/${category.value}/${resourceId.value}?tab=${encodeURIComponent(locate.tab)}#${locate.anchor}`,
+  `/resources/${resourceId.value}?tab=${encodeURIComponent(locate.tab)}#${locate.anchor}`,
   { replace: true }
 )
 </script>

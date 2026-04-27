@@ -750,6 +750,7 @@ const mysqlResourceCategories = mysqlTable('resource_categories', {
   autoFeature: boolean('auto_feature').notNull().default(false),
   parentCategoryId: int('parent_category_id').notNull().default(0),
   displayOrder: int('display_order').notNull().default(1),
+  icon: varchar('icon', { length: 128 }).notNull().default('i-lucide-folder'),
   templateId: int('template_id')
     .notNull()
     .references(() => mysqlResourceTemplates.id, { onDelete: 'restrict' })
@@ -780,6 +781,7 @@ const sqliteResourceCategories = sqliteTable('resource_categories', {
   autoFeature: integer('auto_feature', { mode: 'boolean' }).notNull().default(false),
   parentCategoryId: integer('parent_category_id', { mode: 'number' }).notNull().default(0),
   displayOrder: integer('display_order', { mode: 'number' }).notNull().default(1),
+  icon: text('icon').notNull().default('i-lucide-folder'),
   templateId: integer('template_id', { mode: 'number' })
     .notNull()
     .references(() => sqliteResourceTemplates.id, { onDelete: 'restrict' })
@@ -791,10 +793,12 @@ const mysqlResourceFields = mysqlTable('resource_fields', {
   id: varchar('id', { length: 25 }).primaryKey(),
   title: varchar('title', { length: 255 }).notNull(),
   description: varchar('description', { length: 1024 }).notNull().default(''),
-  displayGroup: varchar('display_group', { length: 25 }).notNull().default('above_info'),
+  displayGroup: varchar('display_group', { length: 255 }).notNull().default('above_info'),
   displayOrder: int('display_order').notNull().default(1),
   fieldType: varchar('field_type', { length: 25 }).notNull().default('textbox'),
   fieldChoices: json('field_choices').$type<Record<string, string>>().notNull(),
+  matchType: varchar('match_type', { length: 25 }).notNull().default('none'),
+  matchParams: json('match_params').$type<Record<string, string>>().notNull(),
   required: boolean('required').notNull().default(false),
   maxLength: int('max_length').notNull().default(0),
   viewableResource: boolean('viewable_resource').notNull().default(true)
@@ -808,6 +812,8 @@ const sqliteResourceFields = sqliteTable('resource_fields', {
   displayOrder: integer('display_order', { mode: 'number' }).notNull().default(1),
   fieldType: text('field_type').notNull().default('textbox'),
   fieldChoices: text('field_choices', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+  matchType: text('match_type').notNull().default('none'),
+  matchParams: text('match_params', { mode: 'json' }).$type<Record<string, string>>().notNull(),
   required: integer('required', { mode: 'boolean' }).notNull().default(false),
   maxLength: integer('max_length', { mode: 'number' }).notNull().default(0),
   viewableResource: integer('viewable_resource', { mode: 'boolean' }).notNull().default(true)

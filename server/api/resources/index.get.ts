@@ -22,6 +22,8 @@ export default defineEventHandler(async (event) => {
       id: resourceCategories.id,
       name: resourceCategories.name,
       slug: resourceCategories.slug,
+      parentCategoryId: resourceCategories.parentCategoryId,
+      icon: resourceCategories.icon,
       resourcesCount: resourceCategories.resourceCount
     })
     .from(resourceCategories)

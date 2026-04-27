@@ -29,7 +29,17 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const parsed = payloadSchema.safeParse(body)
   if (!parsed.success) {
-    throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
   }
 
   const db = await useDb()
@@ -118,4 +128,3 @@ export default defineEventHandler(async (event) => {
 
   return { success: true }
 })
-

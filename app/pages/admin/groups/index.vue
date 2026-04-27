@@ -75,7 +75,25 @@ type ManageResponse = {
 
 function getErrorMessage(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined
-  const maybe = error as { data?: { message?: string } }
+  const maybe = error as {
+    data?: {
+      message?: string
+      data?: {
+        details?: Array<{ path?: string, message?: string }>
+      }
+    }
+  }
+  const first = maybe.data?.data?.details?.[0]
+  if (first?.message) {
+    const pathMap: Record<string, string> = {
+      'data.name': t('AdminGroups.groupName'),
+      'data.slug': t('AdminGroups.slug'),
+      'data.description': t('AdminGroups.groupDesc'),
+      'data.permissions': t('AdminGroups.permissions')
+    }
+    const label = first.path ? pathMap[first.path] : ''
+    return label ? `${label}: ${first.message}` : first.message
+  }
   return maybe.data?.message
 }
 

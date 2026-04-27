@@ -18,11 +18,33 @@ export default defineEventHandler(async (event) => {
   const versionIdRaw = getRouterParam(event, 'versionId')
   const versionId = Number(versionIdRaw)
   if (!resourceId || !Number.isFinite(versionId) || versionId <= 0) {
-    throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: [
+          { path: 'params.id', message: resourceId ? '' : 'Required' },
+          { path: 'params.versionId', message: Number.isFinite(versionId) && versionId > 0 ? '' : 'Expected positive number' }
+        ].filter(item => item.message)
+      }
+    })
   }
 
   const parsed = payloadSchema.safeParse(await readBody(event))
-  if (!parsed.success) throw createError({ statusCode: 400, statusMessage: 'Invalid input' })
+  if (!parsed.success) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
+  }
   const ids = parsed.data.ids ?? (parsed.data.id ? [parsed.data.id] : [])
   if (!ids || ids.length === 0) throw createError({ statusCode: 400, statusMessage: 'Missing id(s)' })
 
@@ -105,4 +127,3 @@ export default defineEventHandler(async (event) => {
 
   return { success: true, deleted: rows.length }
 })
-

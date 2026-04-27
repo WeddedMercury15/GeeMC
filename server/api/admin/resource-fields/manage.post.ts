@@ -4,14 +4,23 @@ import { categoryFields, resourceFields } from '../../../database/schema'
 import { useDb } from '../../../utils/db'
 import { requireGeemcAdmin } from '../../../utils/requireGeemcAdmin'
 
+const DISPLAY_GROUP_VALUES = ['above_info', 'below_info', 'above_rating', 'below_rating', 'below_sidebar_buttons', 'sidebar', 'extra_tab', 'new_tab'] as const
+
+function normalizeDisplayGroups(groups: string[]) {
+  const next = Array.from(new Set(groups.map(group => String(group || '').trim()).filter(Boolean)))
+  return next.length > 0 ? next : ['above_info']
+}
+
 const fieldSchema = z.object({
   id: z.string().min(1).max(25),
   title: z.string().min(1).max(255),
   description: z.string().max(1024).optional(),
-  displayGroup: z.string().min(1).max(25),
+  displayGroups: z.array(z.enum(DISPLAY_GROUP_VALUES)).min(1).max(DISPLAY_GROUP_VALUES.length),
   displayOrder: z.number().int().min(0),
-  fieldType: z.string().min(1).max(25),
+  fieldType: z.enum(['textbox', 'textarea', 'select', 'radio', 'checkbox', 'multiselect']),
   fieldChoices: z.record(z.string(), z.string()).optional(),
+  matchType: z.enum(['none', 'number', 'alphanumeric', 'email', 'url', 'regex']).default('none'),
+  matchParams: z.record(z.string(), z.string()).optional(),
   required: z.boolean(),
   maxLength: z.number().int().min(0),
   viewableResource: z.boolean(),
@@ -31,7 +40,18 @@ export default defineEventHandler(async (event) => {
   const parsed = payloadSchema.safeParse(body)
 
   if (!parsed.success) {
-    throw createError({ statusCode: 400, message: 'Invalid input' })
+    const details = parsed.error.issues.map((issue) => ({
+      path: issue.path.join('.'),
+      message: issue.message
+    }))
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details
+      }
+    })
   }
 
   const p = parsed.data
@@ -49,10 +69,12 @@ export default defineEventHandler(async (event) => {
       id: p.data.id,
       title: p.data.title,
       description: p.data.description ?? '',
-      displayGroup: p.data.displayGroup,
+      displayGroup: normalizeDisplayGroups(p.data.displayGroups).join(','),
       displayOrder: p.data.displayOrder,
       fieldType: p.data.fieldType,
       fieldChoices: p.data.fieldChoices ?? {},
+      matchType: p.data.matchType,
+      matchParams: p.data.matchParams ?? {},
       required: p.data.required,
       maxLength: p.data.maxLength,
       viewableResource: p.data.viewableResource
@@ -60,7 +82,7 @@ export default defineEventHandler(async (event) => {
 
     if (p.data.categoryIds.length > 0) {
       await db.insert(categoryFields).values(
-        p.data.categoryIds.map((categoryId) => ({
+        p.data.categoryIds.map(categoryId => ({
           categoryId,
           fieldId: p.data.id
         }))
@@ -78,10 +100,12 @@ export default defineEventHandler(async (event) => {
     .set({
       title: p.data.title,
       description: p.data.description ?? '',
-      displayGroup: p.data.displayGroup,
+      displayGroup: normalizeDisplayGroups(p.data.displayGroups).join(','),
       displayOrder: p.data.displayOrder,
       fieldType: p.data.fieldType,
       fieldChoices: p.data.fieldChoices ?? {},
+      matchType: p.data.matchType,
+      matchParams: p.data.matchParams ?? {},
       required: p.data.required,
       maxLength: p.data.maxLength,
       viewableResource: p.data.viewableResource
@@ -91,7 +115,7 @@ export default defineEventHandler(async (event) => {
   await db.delete(categoryFields).where(eq(categoryFields.fieldId, p.fieldId))
   if (p.data.categoryIds.length > 0) {
     await db.insert(categoryFields).values(
-      p.data.categoryIds.map((categoryId) => ({
+      p.data.categoryIds.map(categoryId => ({
         categoryId,
         fieldId: p.data.id
       }))

@@ -57,8 +57,8 @@ export default defineEventHandler(async (event) => {
     }
 
     let targetUrl: string | null = null
-    if (r.resourceId && r.resourceCategoryKey) {
-      const base = `/${r.resourceCategoryKey}/${r.resourceId}`
+    if (r.resourceId) {
+      const base = `/resources/${r.resourceId}`
       if (target && typeof target === 'object' && target !== null && 'tab' in target) {
         const tab = String((target as { tab?: string }).tab ?? '')
         const anchorValue = (target as { anchor?: string }).anchor

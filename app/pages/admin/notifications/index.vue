@@ -1,4 +1,10 @@
 <script setup lang="ts">
+definePageMeta({
+  layout: 'admin',
+  middleware: 'admin',
+  ssr: false
+})
+
 const { t } = useI18n()
 const page = ref(1)
 const pageSize = ref(20)
@@ -9,6 +15,11 @@ const submitting = ref(false)
 const deletingReviewId = ref<number | null>(null)
 const deletingUpdateId = ref<number | null>(null)
 const toast = useToast()
+
+type NotificationManageValidationError = {
+  path?: string
+  message?: string
+}
 
 const typeItems = computed(() => [
   { label: t('notifications.type_all'), value: 'all' },
@@ -72,6 +83,37 @@ function setSelected(id: number, checked: boolean | 'indeterminate') {
   selectedIds.value = selectedIds.value.filter(x => x !== id)
 }
 
+function getActionErrorMessage(error: unknown) {
+  const fallback = t('admin.notifications_page.action_failed')
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      data?: {
+        details?: NotificationManageValidationError[]
+      }
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  const details = maybeError.data?.data?.details
+  if (Array.isArray(details) && details.length > 0) {
+    const first = details[0]
+    const pathMap: Record<string, string> = {
+      ids: t('admin.notifications_page.field_notifications'),
+      action: t('admin.notifications_page.field_action')
+    }
+    const path = String(first?.path || '')
+    const label = pathMap[path] || Object.entries(pathMap).find(([key]) => path === key || path.startsWith(`${key}.`))?.[1] || ''
+    return label ? `${label}: ${first?.message || fallback}` : (first?.message || fallback)
+  }
+
+  return maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message || fallback
+}
+
 async function applyAction(action: 'read' | 'unread' | 'delete', ids?: number[]) {
   const targetIds = ids && ids.length > 0 ? ids : selectedIds.value
   if (targetIds.length === 0) return
@@ -83,8 +125,8 @@ async function applyAction(action: 'read' | 'unread' | 'delete', ids?: number[])
     })
     selectedIds.value = selectedIds.value.filter(id => !targetIds.includes(id))
     await refreshNuxtData('admin-notifications-page')
-  } catch {
-    toast.add({ title: t('common.error'), description: t('admin.notifications_page.action_failed'), color: 'error' })
+  } catch (error) {
+    toast.add({ title: t('common.error'), description: getActionErrorMessage(error), color: 'error' })
   } finally {
     submitting.value = false
   }

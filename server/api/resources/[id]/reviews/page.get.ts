@@ -1,10 +1,10 @@
-import { alias, and, count, desc, eq, inArray, sql } from 'drizzle-orm'
-import { resourceReviewReplies, resourceReviews, resourceReviewVotes, resources, users } from '../../../../../database/schema'
-import { resolveUserAvatarUrl } from '../../../../../utils/avatarUrl'
-import { useDb } from '../../../../../utils/db'
-import { getCurrentUser } from '../../../../../utils/auth'
-import { canManageResourceByTeam } from '../../../../../utils/resourceTeam'
-import { resolveUserGroupClaims } from '../../../../../utils/userGroupClaims'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { resourceReviewReplies, resourceReviews, resourceReviewVotes, resources, users } from '../../../../database/schema'
+import { resolveUserAvatarUrl } from '../../../../utils/avatarUrl'
+import { useDb } from '../../../../utils/db'
+import { getCurrentUser } from '../../../../utils/auth'
+import { canManageResourceByTeam } from '../../../../utils/resourceTeam'
+import { resolveUserGroupClaims } from '../../../../utils/userGroupClaims'
 
 type ReviewOrder = 'rating_date' | 'vote_score' | 'rating'
 type ReviewDirection = 'asc' | 'desc'
@@ -108,25 +108,30 @@ export default defineEventHandler(async (event) => {
   }
   const repliesByReviewId = new Map<number, { userId: number, userName: string, userAvatar: string, message: string, createdAt: string, updatedAt: string }>()
   if (reviewIds.length > 0) {
-    const replier = alias(users, 'replier')
     const replyRows = await db
       .select({
         reviewId: resourceReviewReplies.reviewId,
         userId: resourceReviewReplies.replierUserId,
-        userName: replier.username,
-        userGeeIdUserId: replier.geeIdUserId,
         message: resourceReviewReplies.message,
         createdAt: resourceReviewReplies.createdAt,
         updatedAt: resourceReviewReplies.updatedAt
       })
       .from(resourceReviewReplies)
-      .innerJoin(replier, eq(resourceReviewReplies.replierUserId, replier.id))
       .where(inArray(resourceReviewReplies.reviewId, reviewIds))
+    const replierIds = Array.from(new Set(replyRows.map(row => Number(row.userId)).filter(v => Number.isFinite(v) && v > 0)))
+    const replierRows = replierIds.length > 0
+      ? await db
+          .select({ id: users.id, username: users.username, geeIdUserId: users.geeIdUserId })
+          .from(users)
+          .where(inArray(users.id, replierIds))
+      : []
+    const replierById = new Map(replierRows.map(r => [Number(r.id), r]))
     for (const row of replyRows) {
+      const replier = replierById.get(Number(row.userId))
       repliesByReviewId.set(Number(row.reviewId), {
         userId: Number(row.userId),
-        userName: row.userName,
-        userAvatar: resolveUserAvatarUrl(null, row.userGeeIdUserId) ?? '',
+        userName: replier?.username ?? '',
+        userAvatar: resolveUserAvatarUrl(null, replier?.geeIdUserId ?? null) ?? '',
         message: row.message,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt

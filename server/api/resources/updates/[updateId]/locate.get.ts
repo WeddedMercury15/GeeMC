@@ -1,9 +1,9 @@
 import { eq } from 'drizzle-orm'
-import { resourceUpdates, resources } from '../../../../../database/schema'
-import { getCurrentUser } from '../../../../../utils/auth'
-import { useDb } from '../../../../../utils/db'
-import { canManageResourceByTeam } from '../../../../../utils/resourceTeam'
-import { resolveUserGroupClaims } from '../../../../../utils/userGroupClaims'
+import { resourceUpdates, resources } from '../../../../database/schema'
+import { getCurrentUser } from '../../../../utils/auth'
+import { useDb } from '../../../../utils/db'
+import { canManageResourceByTeam } from '../../../../utils/resourceTeam'
+import { resolveUserGroupClaims } from '../../../../utils/userGroupClaims'
 
 export default defineEventHandler(async (event) => {
   const updateId = Number(getRouterParam(event, 'updateId'))

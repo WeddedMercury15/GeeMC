@@ -25,7 +25,8 @@ const manageSchema = z.object({
       requirePrefix: z.boolean().optional(),
       minTags: z.number().int().min(0).optional(),
       parentCategoryId: z.number().int().min(0).optional(),
-      displayOrder: z.number().int().min(1).optional()
+      displayOrder: z.number().int().min(1).optional(),
+      icon: z.string().min(1).max(128).optional()
     })
     .optional()
 })
@@ -55,7 +56,17 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const result = manageSchema.safeParse(body)
   if (!result.success) {
-    throw createError({ statusCode: 400, message: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      message: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: result.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
   }
 
   const { intent, categoryId, data } = result.data
@@ -134,6 +145,7 @@ export default defineEventHandler(async (event) => {
       minTags: data.minTags ?? 0,
       parentCategoryId: data.parentCategoryId ?? 0,
       displayOrder: data.displayOrder ?? 1,
+      icon: data.icon ?? 'i-lucide-folder',
       templateId: data.templateId
     })
 
@@ -185,6 +197,7 @@ export default defineEventHandler(async (event) => {
         minTags: data.minTags ?? 0,
         parentCategoryId: data.parentCategoryId ?? 0,
         displayOrder: data.displayOrder ?? 1,
+        icon: data.icon ?? 'i-lucide-folder',
         templateId: data.templateId
       })
       .where(eq(resourceCategories.id, categoryId))
@@ -198,4 +211,3 @@ export default defineEventHandler(async (event) => {
 
   return { success: false, error: 'Invalid intent' }
 })
-

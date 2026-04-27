@@ -1,9 +1,9 @@
 import { and, eq } from 'drizzle-orm'
-import { resourceReviewReplies, resourceReviews, resources } from '../../../../../../database/schema'
-import { getCurrentUser } from '../../../../../../utils/auth'
-import { useDb } from '../../../../../../utils/db'
-import { canManageResourceByTeam } from '../../../../../../utils/resourceTeam'
-import { resolveUserGroupClaims } from '../../../../../../utils/userGroupClaims'
+import { resourceReviewReplies, resourceReviews, resources } from '../../../../../database/schema'
+import { getCurrentUser } from '../../../../../utils/auth'
+import { useDb } from '../../../../../utils/db'
+import { canManageResourceByTeam } from '../../../../../utils/resourceTeam'
+import { resolveUserGroupClaims } from '../../../../../utils/userGroupClaims'
 
 export default defineEventHandler(async (event) => {
   const user = await getCurrentUser(event)

@@ -62,7 +62,17 @@ export default defineEventHandler(async (event) => {
   const result = manageSchema.safeParse(body)
 
   if (!result.success) {
-    throw createError({ statusCode: 400, message: 'Invalid input' })
+    throw createError({
+      statusCode: 400,
+      message: 'Invalid input',
+      data: {
+        code: 'VALIDATION_ERROR',
+        details: result.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message
+        }))
+      }
+    })
   }
 
   const { intent, groupId, data: groupData } = result.data

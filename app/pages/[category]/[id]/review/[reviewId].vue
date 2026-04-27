@@ -1,7 +1,10 @@
 <script setup lang="ts">
 const route = useRoute()
 
-const category = computed(() => String(route.params.category || ''))
+definePageMeta({
+  path: '/resources/:id(\\d+)/review/:reviewId(\\d+)'
+})
+
 const resourceId = computed(() => String(route.params.id || ''))
 const reviewId = computed(() => String(route.params.reviewId || ''))
 
@@ -11,7 +14,7 @@ const locate = await $fetch<{ page: number, anchor: string }>(
 )
 
 await navigateTo(
-  `/${category.value}/${resourceId.value}/reviews?page=${locate.page}#${locate.anchor}`,
+  `/resources/${resourceId.value}/reviews?page=${locate.page}#${locate.anchor}`,
   { replace: true }
 )
 </script>
