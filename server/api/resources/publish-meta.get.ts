@@ -2,6 +2,7 @@ import { asc } from 'drizzle-orm'
 import { categoryFields, resourceCategories, resourceFields } from '../../database/schema'
 import { useDb } from '../../utils/db'
 import { requireGeemcPublish } from '../../utils/requireGeemcPublish'
+import { normalizeResourceFieldChoices } from '../../utils/resourceFieldChoices'
 
 function parseDisplayGroups(value: string) {
   const groups = String(value || '')
@@ -38,12 +39,14 @@ export default defineEventHandler(async (event) => {
       description: resourceFields.description,
       displayGroup: resourceFields.displayGroup,
       displayOrder: resourceFields.displayOrder,
+      fieldScope: resourceFields.fieldScope,
       fieldType: resourceFields.fieldType,
       fieldChoices: resourceFields.fieldChoices,
       matchType: resourceFields.matchType,
       matchParams: resourceFields.matchParams,
       required: resourceFields.required,
-      maxLength: resourceFields.maxLength
+      maxLength: resourceFields.maxLength,
+      versionFilterable: resourceFields.versionFilterable
     })
     .from(resourceFields)
     .orderBy(asc(resourceFields.displayGroup), asc(resourceFields.displayOrder), asc(resourceFields.id))
@@ -60,6 +63,7 @@ export default defineEventHandler(async (event) => {
     categories,
     fields: fields.map(f => ({
       ...f,
+      fieldChoices: normalizeResourceFieldChoices(f.fieldChoices),
       displayGroups: parseDisplayGroups(f.displayGroup),
       categoryIds: fieldCategoryMap.get(f.id) ?? []
     }))

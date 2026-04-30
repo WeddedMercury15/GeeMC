@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { resourceVersionFiles } from '../../../../../../../database/schema'
+import { resourceVersionFiles, resources } from '../../../../../../../database/schema'
 import { useDb } from '../../../../../../../utils/db'
 import { requireGeemcPublish } from '../../../../../../../utils/requireGeemcPublish'
 import { storePublicUpload } from '../../../../../../../utils/fileStorage'
@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const form = await readMultipartFormData(event)
-  const filePart = form?.find(p => p.type === 'file')
+  const filePart = form?.find(p => p.name === 'file' && !!p.filename)
   if (!filePart || !('data' in filePart) || !filePart.data) {
     throw createError({ statusCode: 400, statusMessage: 'Missing file' })
   }
@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
   await assertCanManageVersionFiles({ db, resourceId, versionId, userId: Number(user.id) })
 
   const [oldRow] = await db
-    .select({ storagePath: resourceVersionFiles.storagePath })
+    .select({ storagePath: resourceVersionFiles.storagePath, isPrimary: resourceVersionFiles.isPrimary })
     .from(resourceVersionFiles)
     .where(and(
       eq(resourceVersionFiles.id, fileId),
@@ -67,6 +67,14 @@ export default defineEventHandler(async (event) => {
       publicUrl: stored.publicUrl
     })
     .where(eq(resourceVersionFiles.id, fileId))
+
+  if (oldRow.isPrimary) {
+    const now = new Date().toISOString()
+    await db
+      .update(resources)
+      .set({ updateDate: now, lastUpdate: now })
+      .where(eq(resources.id, resourceId))
+  }
 
   const abs = path.join(process.cwd(), oldRow.storagePath)
   await unlink(abs).catch(() => {})

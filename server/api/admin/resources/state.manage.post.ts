@@ -8,6 +8,7 @@ import { changeResourceState, resolveStateByIntent } from '../../../utils/resour
 const payloadSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(200),
   intent: z.enum(['hide', 'restore', 'delete']),
+  deleteMode: z.enum(['soft', 'hard']).optional(),
   reason: z.string().max(1000).optional()
 })
 
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const { ids, intent, reason } = parsed.data
+  const { ids, intent, deleteMode, reason } = parsed.data
   const nextState = resolveStateByIntent(intent)
 
   const db = await useDb()
@@ -38,6 +39,11 @@ export default defineEventHandler(async (event) => {
     .where(inArray(resources.id, ids))
 
   if (rows.length === 0) return { success: true, changed: 0 }
+
+  if (intent === 'delete' && deleteMode === 'hard') {
+    await db.delete(resources).where(inArray(resources.id, rows.map(row => row.id)))
+    return { success: true, changed: rows.length }
+  }
 
   const targetIds = rows.filter(r => r.resourceState !== nextState).map(r => r.id)
   if (targetIds.length === 0) return { success: true, changed: 0 }

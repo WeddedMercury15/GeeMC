@@ -149,7 +149,10 @@ const handleUpload = () => {
     })
     return
   }
-  void router.push('/resources/create')
+  const nextQuery: Record<string, string> = {}
+  if (selectedCategory.value) nextQuery.category = selectedCategory.value
+  if (activeTag.value) nextQuery.tag = activeTag.value
+  void router.push({ path: '/resources/create', query: nextQuery })
 }
 
 const resources = computed<ResourceListItem[]>(() => resourcesData.value?.items ?? [])

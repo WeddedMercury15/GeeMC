@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { NormalizedResourceFieldChoiceRecord } from '~/utils/resourceFieldChoices'
+
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
@@ -27,11 +30,19 @@ type PublishField = {
   displayGroup: string
   displayGroups: string[]
   displayOrder: number
+  fieldScope: 'resource' | 'version'
   fieldType: string
-  fieldChoices: Record<string, string>
+  fieldChoices: NormalizedResourceFieldChoiceRecord
   required: boolean
   maxLength: number
+  versionFilterable: boolean
   categoryIds: number[]
+}
+
+type PublishFieldChoiceItem = {
+  label: string
+  value: string
+  iconUrl?: string
 }
 
 type CategoryTreeItem = {
@@ -64,14 +75,16 @@ const form = reactive({
   price: 0,
   currency: '',
   versionName: '',
-  versionType: 'release',
-  size: ''
+  versionType: 'release'
 })
 
 const customFields = reactive<Record<string, string | string[]>>({})
+const versionCustomFields = reactive<Record<string, string | string[]>>({})
 const submitting = ref(false)
 const coverUploading = ref(false)
 const iconUploading = ref(false)
+const versionFile = shallowRef<File | null>(null)
+const versionFileName = ref('')
 const coverFileName = ref('')
 const iconFileName = ref('')
 const categoryPickerOpen = ref(false)
@@ -98,6 +111,16 @@ watch(selectedCategory, (c) => {
   }
 })
 watch(categories, () => {
+  const categoryQuery = typeof route.query.category === 'string' ? route.query.category.trim() : ''
+  if (categoryQuery) {
+    const matched = categories.value.find(category =>
+      category.slug === categoryQuery || String(category.id) === categoryQuery
+    )
+    if (matched) {
+      form.categoryId = matched.id
+      return
+    }
+  }
   if (form.categoryId) return
   const first = categories.value[0]
   if (first) form.categoryId = first.id
@@ -110,6 +133,8 @@ const fields = computed(() => {
     .filter(f => f.categoryIds.includes(cid))
     .sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0))
 })
+const resourceFields = computed(() => fields.value.filter(field => field.fieldScope !== 'version'))
+const versionFields = computed(() => fields.value.filter(field => field.fieldScope === 'version'))
 function normalizeDisplayGroup(group: string) {
   if (group === 'above_info' || group === 'above_rating') return 'above_info'
   if (group === 'below_info' || group === 'below_rating' || group === 'extra_tab' || group === 'new_tab') return 'below_info'
@@ -120,13 +145,13 @@ function getNormalizedDisplayGroups(field: PublishField) {
   const rawGroups = field.displayGroups?.length ? field.displayGroups : [field.displayGroup]
   return Array.from(new Set(rawGroups.map(normalizeDisplayGroup)))
 }
-const fieldsAboveInfo = computed(() => fields.value.filter(f => getNormalizedDisplayGroups(f).includes('above_info')))
-const fieldsBelowInfo = computed(() => fields.value.filter(f => getNormalizedDisplayGroups(f).includes('below_info')))
-const fieldsSidebar = computed(() => fields.value.filter(f => getNormalizedDisplayGroups(f).includes('sidebar')))
+const fieldsAboveInfo = computed(() => resourceFields.value.filter(f => getNormalizedDisplayGroups(f).includes('above_info')))
+const fieldsBelowInfo = computed(() => resourceFields.value.filter(f => getNormalizedDisplayGroups(f).includes('below_info')))
+const fieldsSidebar = computed(() => resourceFields.value.filter(f => getNormalizedDisplayGroups(f).includes('sidebar')))
 const selectedCategoryName = computed(() => selectedCategory.value?.name ?? '')
 const fieldLabelById = computed(() => {
   const map = new Map<string, string>()
-  for (const field of fields.value) {
+  for (const field of allFields.value) {
     map.set(field.id, field.title)
   }
   return map
@@ -219,33 +244,45 @@ function validateForm() {
     }
   }
 
-  for (const field of fields.value) {
-    const rawValue = customFields[field.id]
-    const value = Array.isArray(rawValue)
-      ? rawValue.join(',').trim()
-      : String(rawValue ?? '').trim()
+  const validateFieldSet = (targetFields: PublishField[], values: Record<string, string | string[]>) => {
+    for (const field of targetFields) {
+      const rawValue = values[field.id]
+      const value = Array.isArray(rawValue)
+        ? rawValue.join(',').trim()
+        : String(rawValue ?? '').trim()
 
-    if (field.required && !value) return t('validation.required_label', { label: field.title })
-    if (!value) continue
+      if (field.required && !value) return t('validation.required_label', { label: field.title })
+      if (!value) continue
 
-    if (Number(field.maxLength || 0) > 0 && value.length > Number(field.maxLength)) {
-      return t('validation.max_length_label', { label: field.title, max: field.maxLength })
-    }
+      if (Number(field.maxLength || 0) > 0 && value.length > Number(field.maxLength)) {
+        return t('validation.max_length_label', { label: field.title, max: field.maxLength })
+      }
 
-    const choices = Object.keys(field.fieldChoices ?? {})
-    if (choices.length === 0) continue
+      const choices = Object.keys(field.fieldChoices ?? {})
+      if (choices.length === 0) continue
 
-    if (field.fieldType === 'select' || field.fieldType === 'radio') {
-      if (!choices.includes(value)) return t('validation.invalid_choice_label', { label: field.title })
-      continue
-    }
+      if (field.fieldType === 'select' || field.fieldType === 'radio') {
+        if (!choices.includes(value)) return t('validation.invalid_choice_label', { label: field.title })
+        continue
+      }
 
-    if (field.fieldType === 'multiselect' || field.fieldType === 'checkbox') {
-      const selectedValues = value.split(',').map(item => item.trim()).filter(Boolean)
-      if (selectedValues.some(choice => !choices.includes(choice))) {
-        return t('validation.invalid_choice_label', { label: field.title })
+      if (field.fieldType === 'multiselect' || field.fieldType === 'checkbox') {
+        const selectedValues = value.split(',').map(item => item.trim()).filter(Boolean)
+        if (selectedValues.some(choice => !choices.includes(choice))) {
+          return t('validation.invalid_choice_label', { label: field.title })
+        }
       }
     }
+
+    return null
+  }
+
+  const resourceFieldValidation = validateFieldSet(resourceFields.value, customFields)
+  if (resourceFieldValidation) return resourceFieldValidation
+
+  if (form.resourceType === 'download') {
+    const versionFieldValidation = validateFieldSet(versionFields.value, versionCustomFields)
+    if (versionFieldValidation) return versionFieldValidation
   }
 
   return null
@@ -322,6 +359,41 @@ function getSubmitErrorMessage(error: unknown) {
   return statusMessage
 }
 
+function getVersionFileUploadErrorMessage(error: unknown) {
+  const fallback = t('resources.file_upload_failed')
+  if (!error || typeof error !== 'object') return fallback
+
+  const maybeError = error as {
+    data?: {
+      message?: string
+      statusMessage?: string
+    }
+    message?: string
+    statusMessage?: string
+  }
+
+  return maybeError.data?.message || maybeError.data?.statusMessage || maybeError.statusMessage || maybeError.message || fallback
+}
+
+async function uploadInitialVersionFile(resourceId: string, versionId: number) {
+  const file = versionFile.value
+  if (!file) return
+
+  const formData = new FormData()
+  formData.append('file', file)
+  await $fetch(`/api/resources/${resourceId}/versions/${versionId}/files/upload`, {
+    method: 'POST',
+    body: formData
+  })
+}
+
+function onPickVersionFile(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  versionFile.value = file ?? null
+  versionFileName.value = file?.name ?? ''
+}
+
 async function submit() {
   const validationMessage = validateForm()
   if (validationMessage) {
@@ -331,7 +403,7 @@ async function submit() {
 
   submitting.value = true
   try {
-    const res = await $fetch<{ success: boolean, redirectTo: string }>('/api/resources/create', {
+    const res = await $fetch<{ success: boolean, redirectTo: string, resourceId: string, versionId?: number | null }>('/api/resources/create', {
       method: 'POST',
       body: {
         ...form,
@@ -344,10 +416,30 @@ async function submit() {
             key,
             Array.isArray(value) ? value.join(',') : String(value ?? '')
           ])
+        ),
+        versionCustomFields: Object.fromEntries(
+          Object.entries(versionCustomFields).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? value.join(',') : String(value ?? '')
+          ])
         )
       }
     })
     if (res.success) {
+      const selectedFile = versionFile.value
+      if (selectedFile && res.versionId) {
+        try {
+          await uploadInitialVersionFile(res.resourceId, res.versionId)
+        } catch (error) {
+          toast.add({
+            title: t('common.error'),
+            description: getVersionFileUploadErrorMessage(error),
+            color: 'error'
+          })
+        }
+      }
+      versionFile.value = null
+      versionFileName.value = ''
       await router.push(res.redirectTo)
       return
     }
@@ -359,7 +451,15 @@ async function submit() {
 }
 
 function fieldChoiceItems(field: PublishField) {
-  return Object.entries(field.fieldChoices ?? {}).map(([value, label]) => ({ label, value }))
+  return Object.entries(field.fieldChoices ?? {}).map(([value, choice]) => ({
+    label: choice.label,
+    value,
+    ...(choice.iconUrl ? { iconUrl: choice.iconUrl } : {})
+  }))
+}
+
+function getFieldChoiceItem(field: PublishField, value: string) {
+  return fieldChoiceItems(field).find(item => item.value === value)
 }
 
 function fieldDescriptionWithLimit(field: PublishField) {
@@ -370,13 +470,13 @@ function fieldDescriptionWithLimit(field: PublishField) {
   return base ? `${base} (${limitText})` : limitText
 }
 
-function isChoiceChecked(fieldId: string, value: string) {
-  const current = customFields[fieldId]
+function isChoiceCheckedIn(store: Record<string, string | string[]>, fieldId: string, value: string) {
+  const current = store[fieldId]
   return Array.isArray(current) && current.includes(value)
 }
 
-function setChoiceChecked(fieldId: string, value: string, checked: boolean) {
-  const current = customFields[fieldId]
+function setChoiceCheckedIn(store: Record<string, string | string[]>, fieldId: string, value: string, checked: boolean) {
+  const current = store[fieldId]
   const next = Array.isArray(current) ? [...current] : []
   const exists = next.includes(value)
   if (checked && !exists) next.push(value)
@@ -384,11 +484,11 @@ function setChoiceChecked(fieldId: string, value: string, checked: boolean) {
     const index = next.indexOf(value)
     if (index >= 0) next.splice(index, 1)
   }
-  customFields[fieldId] = next
+  store[fieldId] = next
 }
 
 function ensureCustomFieldDefaults() {
-  for (const field of fields.value) {
+  for (const field of resourceFields.value) {
     const current = customFields[field.id]
     if (field.fieldType === 'multiselect' || field.fieldType === 'checkbox') {
       if (!Array.isArray(current)) customFields[field.id] = []
@@ -400,6 +500,21 @@ function ensureCustomFieldDefaults() {
     }
     if (typeof current !== 'string') {
       customFields[field.id] = ''
+    }
+  }
+
+  for (const field of versionFields.value) {
+    const current = versionCustomFields[field.id]
+    if (field.fieldType === 'multiselect' || field.fieldType === 'checkbox') {
+      if (!Array.isArray(current)) versionCustomFields[field.id] = []
+      continue
+    }
+    if (Array.isArray(current)) {
+      versionCustomFields[field.id] = current.join(',')
+      continue
+    }
+    if (typeof current !== 'string') {
+      versionCustomFields[field.id] = ''
     }
   }
 }
@@ -569,14 +684,43 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 :items="fieldChoiceItems(f)"
                 label-key="label"
                 value-key="value"
-              />
+              >
+                <template #leading="{ modelValue }">
+                  <UAvatar
+                    v-if="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                    :src="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                    :alt="getFieldChoiceItem(f, String(modelValue || ''))?.label"
+                    size="2xs"
+                  />
+                </template>
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelect>
               <URadioGroup
                 v-else-if="f.fieldType === 'radio'"
                 v-model="customFields[f.id] as string"
                 :items="fieldChoiceItems(f)"
                 value-key="value"
                 orientation="horizontal"
-              />
+              >
+                <template #label="{ item }">
+                  <span class="inline-flex items-center gap-2">
+                    <UAvatar
+                      v-if="item.iconUrl"
+                      :src="item.iconUrl"
+                      :alt="item.label"
+                      size="2xs"
+                    />
+                    <span>{{ item.label }}</span>
+                  </span>
+                </template>
+              </URadioGroup>
               <div
                 v-else-if="f.fieldType === 'checkbox'"
                 class="grid gap-2"
@@ -584,10 +728,21 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 <UCheckbox
                   v-for="option in fieldChoiceItems(f)"
                   :key="`${f.id}-${option.value}`"
-                  :label="option.label"
-                  :model-value="isChoiceChecked(f.id, option.value)"
-                  @update:model-value="value => setChoiceChecked(f.id, option.value, !!value)"
-                />
+                  :model-value="isChoiceCheckedIn(customFields, f.id, option.value)"
+                  @update:model-value="value => setChoiceCheckedIn(customFields, f.id, option.value, !!value)"
+                >
+                  <template #label>
+                    <span class="inline-flex items-center gap-2">
+                      <UAvatar
+                        v-if="option.iconUrl"
+                        :src="option.iconUrl"
+                        :alt="option.label"
+                        size="2xs"
+                      />
+                      <span>{{ option.label }}</span>
+                    </span>
+                  </template>
+                </UCheckbox>
               </div>
               <USelectMenu
                 v-else-if="f.fieldType === 'multiselect'"
@@ -596,7 +751,16 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 :items="fieldChoiceItems(f)"
                 value-key="value"
                 multiple
-              />
+              >
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelectMenu>
               <UInput
                 v-else
                 v-model="customFields[f.id] as string"
@@ -619,6 +783,153 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
               class="w-full"
             />
           </UFormField>
+        </UCard>
+
+        <UCard v-if="form.resourceType === 'download'">
+          <template #header>
+            <div class="font-medium">
+              {{ t('resources.publish_version') }}
+            </div>
+          </template>
+          <div class="space-y-3">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <UFormField :label="t('resources.publish.version_name')">
+                <UInput v-model="form.versionName" />
+              </UFormField>
+              <UFormField :label="t('resources.publish.version_type')">
+                <USelect
+                  v-model="form.versionType"
+                  :items="[
+                    { label: t('resources.version_type_release'), value: 'release' },
+                    { label: t('resources.version_type_beta'), value: 'beta' },
+                    { label: t('resources.version_type_alpha'), value: 'alpha' }
+                  ]"
+                  label-key="label"
+                  value-key="value"
+                />
+              </UFormField>
+              <UFormField :label="t('resources.upload_file')">
+                <div class="space-y-2">
+                  <UInput
+                    type="file"
+                    @change="onPickVersionFile"
+                  />
+                  <div class="text-xs text-(--ui-text-muted)">
+                    <span v-if="submitting">{{ t('resources.uploading') }}</span>
+                    <span v-else-if="versionFileName">{{ versionFileName }}</span>
+                    <span v-else>{{ t('resources.version_file_pick') }}</span>
+                  </div>
+                </div>
+              </UFormField>
+            </div>
+            <div
+              v-if="versionFields.length"
+              class="space-y-3"
+            >
+              <UFormField
+                v-for="f in versionFields"
+                :key="f.id"
+                :label="f.title"
+                :description="fieldDescriptionWithLimit(f)"
+                :required="f.required"
+              >
+                <UTextarea
+                  v-if="f.fieldType === 'textarea'"
+                  v-model="versionCustomFields[f.id] as string"
+                  :maxlength="Number(f.maxLength || 0) > 0 ? Number(f.maxLength) : undefined"
+                />
+                <USelect
+                  v-else-if="f.fieldType === 'select'"
+                  v-model="versionCustomFields[f.id] as string"
+                  class="w-72 max-w-full"
+                  :items="fieldChoiceItems(f)"
+                  label-key="label"
+                  value-key="value"
+                >
+                  <template #leading="{ modelValue }">
+                    <UAvatar
+                      v-if="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                      :src="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                      :alt="getFieldChoiceItem(f, String(modelValue || ''))?.label"
+                      size="2xs"
+                    />
+                  </template>
+                  <template #item-leading="{ item }">
+                    <UAvatar
+                      v-if="item.iconUrl"
+                      :src="item.iconUrl"
+                      :alt="item.label"
+                      size="2xs"
+                    />
+                  </template>
+                </USelect>
+                <URadioGroup
+                  v-else-if="f.fieldType === 'radio'"
+                  v-model="versionCustomFields[f.id] as string"
+                  :items="fieldChoiceItems(f)"
+                  value-key="value"
+                  orientation="horizontal"
+                >
+                  <template #label="{ item }">
+                    <span class="inline-flex items-center gap-2">
+                      <UAvatar
+                        v-if="item.iconUrl"
+                        :src="item.iconUrl"
+                        :alt="item.label"
+                        size="2xs"
+                      />
+                      <span>{{ item.label }}</span>
+                    </span>
+                  </template>
+                </URadioGroup>
+                <div
+                  v-else-if="f.fieldType === 'checkbox'"
+                  class="grid gap-2"
+                >
+                  <UCheckbox
+                    v-for="option in fieldChoiceItems(f)"
+                    :key="`${f.id}-${option.value}`"
+                    :model-value="isChoiceCheckedIn(versionCustomFields, f.id, option.value)"
+                    @update:model-value="value => setChoiceCheckedIn(versionCustomFields, f.id, option.value, !!value)"
+                  >
+                    <template #label>
+                      <span class="inline-flex items-center gap-2">
+                        <UAvatar
+                          v-if="option.iconUrl"
+                          :src="option.iconUrl"
+                          :alt="option.label"
+                          size="2xs"
+                        />
+                        <span>{{ option.label }}</span>
+                      </span>
+                    </template>
+                  </UCheckbox>
+                </div>
+                <USelectMenu
+                  v-else-if="f.fieldType === 'multiselect'"
+                  v-model="versionCustomFields[f.id] as string[]"
+                  class="w-72 max-w-full"
+                  :items="fieldChoiceItems(f)"
+                  value-key="value"
+                  multiple
+                >
+                  <template #item-leading="{ item }">
+                    <UAvatar
+                      v-if="item.iconUrl"
+                      :src="item.iconUrl"
+                      :alt="item.label"
+                      size="2xs"
+                    />
+                  </template>
+                </USelectMenu>
+                <UInput
+                  v-else
+                  v-model="versionCustomFields[f.id] as string"
+                  :maxlength="Number(f.maxLength || 0) > 0 ? Number(f.maxLength) : undefined"
+                />
+              </UFormField>
+            </div>
+          </div>
         </UCard>
 
         <UCard>
@@ -685,14 +996,43 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 :items="fieldChoiceItems(f)"
                 label-key="label"
                 value-key="value"
-              />
+              >
+                <template #leading="{ modelValue }">
+                  <UAvatar
+                    v-if="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                    :src="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                    :alt="getFieldChoiceItem(f, String(modelValue || ''))?.label"
+                    size="2xs"
+                  />
+                </template>
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelect>
               <URadioGroup
                 v-else-if="f.fieldType === 'radio'"
                 v-model="customFields[f.id] as string"
                 :items="fieldChoiceItems(f)"
                 value-key="value"
                 orientation="horizontal"
-              />
+              >
+                <template #label="{ item }">
+                  <span class="inline-flex items-center gap-2">
+                    <UAvatar
+                      v-if="item.iconUrl"
+                      :src="item.iconUrl"
+                      :alt="item.label"
+                      size="2xs"
+                    />
+                    <span>{{ item.label }}</span>
+                  </span>
+                </template>
+              </URadioGroup>
               <div
                 v-else-if="f.fieldType === 'checkbox'"
                 class="grid gap-2"
@@ -700,10 +1040,21 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 <UCheckbox
                   v-for="option in fieldChoiceItems(f)"
                   :key="`${f.id}-${option.value}`"
-                  :label="option.label"
-                  :model-value="isChoiceChecked(f.id, option.value)"
-                  @update:model-value="value => setChoiceChecked(f.id, option.value, !!value)"
-                />
+                  :model-value="isChoiceCheckedIn(customFields, f.id, option.value)"
+                  @update:model-value="value => setChoiceCheckedIn(customFields, f.id, option.value, !!value)"
+                >
+                  <template #label>
+                    <span class="inline-flex items-center gap-2">
+                      <UAvatar
+                        v-if="option.iconUrl"
+                        :src="option.iconUrl"
+                        :alt="option.label"
+                        size="2xs"
+                      />
+                      <span>{{ option.label }}</span>
+                    </span>
+                  </template>
+                </UCheckbox>
               </div>
               <USelectMenu
                 v-else-if="f.fieldType === 'multiselect'"
@@ -712,7 +1063,16 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 :items="fieldChoiceItems(f)"
                 value-key="value"
                 multiple
-              />
+              >
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelectMenu>
               <UInput
                 v-else
                 v-model="customFields[f.id] as string"
@@ -750,14 +1110,43 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 :items="fieldChoiceItems(f)"
                 label-key="label"
                 value-key="value"
-              />
+              >
+                <template #leading="{ modelValue }">
+                  <UAvatar
+                    v-if="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                    :src="getFieldChoiceItem(f, String(modelValue || ''))?.iconUrl"
+                    :alt="getFieldChoiceItem(f, String(modelValue || ''))?.label"
+                    size="2xs"
+                  />
+                </template>
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelect>
               <URadioGroup
                 v-else-if="f.fieldType === 'radio'"
                 v-model="customFields[f.id] as string"
                 :items="fieldChoiceItems(f)"
                 value-key="value"
                 orientation="horizontal"
-              />
+              >
+                <template #label="{ item }">
+                  <span class="inline-flex items-center gap-2">
+                    <UAvatar
+                      v-if="item.iconUrl"
+                      :src="item.iconUrl"
+                      :alt="item.label"
+                      size="2xs"
+                    />
+                    <span>{{ item.label }}</span>
+                  </span>
+                </template>
+              </URadioGroup>
               <div
                 v-else-if="f.fieldType === 'checkbox'"
                 class="grid gap-2"
@@ -765,10 +1154,21 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 <UCheckbox
                   v-for="option in fieldChoiceItems(f)"
                   :key="`${f.id}-${option.value}`"
-                  :label="option.label"
-                  :model-value="isChoiceChecked(f.id, option.value)"
-                  @update:model-value="value => setChoiceChecked(f.id, option.value, !!value)"
-                />
+                  :model-value="isChoiceCheckedIn(customFields, f.id, option.value)"
+                  @update:model-value="value => setChoiceCheckedIn(customFields, f.id, option.value, !!value)"
+                >
+                  <template #label>
+                    <span class="inline-flex items-center gap-2">
+                      <UAvatar
+                        v-if="option.iconUrl"
+                        :src="option.iconUrl"
+                        :alt="option.label"
+                        size="2xs"
+                      />
+                      <span>{{ option.label }}</span>
+                    </span>
+                  </template>
+                </UCheckbox>
               </div>
               <USelectMenu
                 v-else-if="f.fieldType === 'multiselect'"
@@ -777,7 +1177,16 @@ async function onPickMedia(kind: 'cover' | 'icon', event: Event) {
                 :items="fieldChoiceItems(f)"
                 value-key="value"
                 multiple
-              />
+              >
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelectMenu>
               <UInput
                 v-else
                 v-model="customFields[f.id] as string"

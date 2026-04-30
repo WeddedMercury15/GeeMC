@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
-import type { ResourceDetail, ResourceVersion } from '../../../app/utils/resourceCatalog'
-import { resourceCategories, resourceFollows, resourceGallery, resourceLinks, resourceReviewReplies, resourceReviews, resourceReviewVotes, resourceTemplates, resourceUpdates, resourceUpdateVotes, resourceVersionFiles, resourceVersions, resources, users } from '../../database/schema'
+import type { ResourceDetail, ResourceVersion, ResourceVersionFieldDefinition } from '../../../app/utils/resourceCatalog'
+import { resourceCategories, resourceFollows, resourceGallery, resourceLinks, resourceReviewReplies, resourceReviews, resourceReviewVotes, resourceTemplates, resourceUpdates, resourceUpdateVotes, resourceVersionFieldValues, resourceVersionFiles, resourceVersions, resources, users, categoryFields, resourceFields } from '../../database/schema'
 import { getCurrentUser } from '../../utils/auth'
 import { resolveUserAvatarUrl } from '../../utils/avatarUrl'
 import { useDb } from '../../utils/db'
+import { normalizeResourceFieldChoices } from '../../utils/resourceFieldChoices'
 import { canManageResourceByTeam } from '../../utils/resourceTeam'
 import { resolveUserGroupClaims } from '../../utils/userGroupClaims'
 
@@ -108,8 +109,74 @@ export default defineEventHandler(async (event) => {
     .where(eq(resourceVersions.resourceId, id))
     .orderBy(desc(resourceVersions.date))
 
+  const versionFieldDefinitions: ResourceVersionFieldDefinition[] = []
+  if (resourceRow.categoryKey) {
+    const [categoryRow] = await db
+      .select({ id: resourceCategories.id })
+      .from(resourceCategories)
+      .where(eq(resourceCategories.slug, resourceRow.categoryKey))
+      .limit(1)
+
+    if (categoryRow) {
+      const links = await db.select().from(categoryFields).where(eq(categoryFields.categoryId, categoryRow.id))
+      const fieldIds = links.map(link => link.fieldId)
+      if (fieldIds.length > 0) {
+        const fieldRows = await db
+          .select({
+            id: resourceFields.id,
+            title: resourceFields.title,
+            description: resourceFields.description,
+            fieldScope: resourceFields.fieldScope,
+            fieldType: resourceFields.fieldType,
+            fieldChoices: resourceFields.fieldChoices,
+            required: resourceFields.required,
+            maxLength: resourceFields.maxLength,
+            versionFilterable: resourceFields.versionFilterable,
+            viewableResource: resourceFields.viewableResource
+          })
+          .from(resourceFields)
+          .where(inArray(resourceFields.id, fieldIds))
+
+        for (const row of fieldRows) {
+          if ((row.fieldScope ?? 'resource') !== 'version') continue
+          versionFieldDefinitions.push({
+            id: row.id,
+            title: row.title,
+            description: row.description || undefined,
+            fieldType: row.fieldType,
+            fieldChoices: normalizeResourceFieldChoices(row.fieldChoices),
+            required: Boolean(row.required),
+            maxLength: Number(row.maxLength ?? 0),
+            versionFilterable: Boolean(row.versionFilterable),
+            viewableResource: Boolean(row.viewableResource)
+          })
+        }
+      }
+    }
+  }
+
+  const versionFieldValuesRows = versionsRows.length > 0
+    ? await db
+        .select({
+          resourceVersionId: resourceVersionFieldValues.resourceVersionId,
+          fieldId: resourceVersionFieldValues.fieldId,
+          fieldValue: resourceVersionFieldValues.fieldValue
+        })
+        .from(resourceVersionFieldValues)
+        .where(inArray(resourceVersionFieldValues.resourceVersionId, versionsRows.map(row => Number(row.id))))
+    : []
+  const versionFieldValuesByVersionId = new Map<number, Record<string, string>>()
+  for (const row of versionFieldValuesRows) {
+    const versionId = Number(row.resourceVersionId)
+    const current = versionFieldValuesByVersionId.get(versionId) ?? {}
+    current[row.fieldId] = row.fieldValue
+    versionFieldValuesByVersionId.set(versionId, current)
+  }
+
   const versions: ResourceVersion[] = versionsRows.map((v) => {
-    const mappedType = v.type === 'snapshot' ? 'snapshot' : 'release'
+    const mappedType = v.type === 'alpha'
+      ? 'alpha'
+      : (v.type === 'beta' ? 'beta' : 'release')
     const loaders = Array.isArray(v.loaders) && v.loaders.length > 0 ? v.loaders : undefined
     const serverTypes = Array.isArray(v.serverTypes) && v.serverTypes.length > 0 ? v.serverTypes : undefined
 
@@ -124,7 +191,8 @@ export default defineEventHandler(async (event) => {
       loaders,
       serverTypes,
       hash: v.hash ?? undefined,
-      facets: []
+      facets: [],
+      customFields: versionFieldValuesByVersionId.get(Number(v.id)) ?? {}
     }
   })
 
@@ -216,11 +284,13 @@ export default defineEventHandler(async (event) => {
     id: u.id,
     title: u.title || undefined,
     version: u.versionString || u.title || '',
-    type: (u.updateType === 'snapshot' ? 'snapshot' : 'release') as 'release' | 'snapshot',
+    type: (u.updateType === 'alpha'
+      ? 'alpha'
+      : (u.updateType === 'beta' ? 'beta' : 'release')) as 'release' | 'beta' | 'alpha',
     date: u.postDate,
     message: u.message,
     markdownHtml: u.messageHtml,
-    updateType: u.updateType as 'update' | 'release' | 'snapshot' | string,
+    updateType: u.updateType as 'update' | 'release' | 'beta' | 'alpha' | string,
     messageState: u.messageState,
     resourceVersionId: u.resourceVersionId ?? null,
     voteCount: Number(updateVoteCountById.get(Number(u.id)) ?? 0),
@@ -409,7 +479,8 @@ export default defineEventHandler(async (event) => {
     versions,
     changelogs,
     ratingScore,
-    reviews
+    reviews,
+    versionFieldDefinitions
   }
 
   return detail

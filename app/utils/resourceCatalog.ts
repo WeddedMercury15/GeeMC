@@ -33,7 +33,7 @@ export interface ResourceListItem {
 export interface ResourceVersion {
   id: number
   name: string
-  type: 'release' | 'snapshot'
+  type: 'release' | 'beta' | 'alpha'
   date: string
   size: string
   downloads: string
@@ -46,6 +46,19 @@ export interface ResourceVersion {
   files?: { id: number, fileName: string, displayName: string, url: string, sizeBytes: number, sortOrder: number, isPrimary: boolean }[]
   /** Facet groups with `appliesToLevel: 'version'`. */
   facets: ResourceFacetGroup[]
+  customFields?: Record<string, string>
+}
+
+export interface ResourceVersionFieldDefinition {
+  id: string
+  title: string
+  description?: string
+  fieldType: string
+  fieldChoices: Record<string, { label: string, iconUrl?: string }>
+  required?: boolean
+  maxLength?: number
+  versionFilterable: boolean
+  viewableResource: boolean
 }
 
 export interface ResourceLink {
@@ -84,11 +97,11 @@ export interface ResourceDetail extends ResourceListItem {
     id?: number
     title?: string
     version: string
-    type: 'release' | 'snapshot'
+    type: 'release' | 'beta' | 'alpha'
     date: string
     message?: string
     markdownHtml: string
-    updateType?: 'update' | 'release' | 'snapshot' | string
+    updateType?: 'update' | 'release' | 'beta' | 'alpha' | string
     resourceVersionId?: number | null
     messageState?: 'visible' | 'deleted' | string
     voteCount?: number
@@ -118,4 +131,5 @@ export interface ResourceDetail extends ResourceListItem {
   }[]
   /** Facet groups attached to the resource (`appliesToLevel: 'resource'`). */
   resourceFacets: ResourceFacetGroup[]
+  versionFieldDefinitions?: ResourceVersionFieldDefinition[]
 }

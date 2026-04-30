@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { NormalizedResourceFieldChoiceRecord } from '~/utils/resourceFieldChoices'
+
 const { t } = useI18n()
 const toast = useToast()
 
@@ -33,18 +35,20 @@ type Field = {
   displayGroup: string
   displayGroups: string[]
   displayOrder: number
+  fieldScope: 'resource' | 'version'
   fieldType: string
-  fieldChoices: Record<string, string>
+  fieldChoices: NormalizedResourceFieldChoiceRecord
   matchType: string
   matchParams: Record<string, string>
   required: boolean
   maxLength: number
+  versionFilterable: boolean
   viewableResource: boolean
   categoryIds: number[]
 }
 
 type ManageResp = { success: boolean, error?: string }
-type ChoiceRow = { key: string, label: string }
+type ChoiceRow = { key: string, label: string, iconUrl: string }
 type FieldValidationError = { path?: string, message?: string }
 
 const { data, refresh } = await useFetch<{ categories: Category[], fields: Field[] }>('/api/admin/resource-fields/page')
@@ -135,6 +139,11 @@ const fieldTypeItems = computed(() => ([
   { label: t('admin.resource_fields_page.field_type_multiselect'), value: 'multiselect' }
 ]))
 
+const fieldScopeItems = computed(() => ([
+  { label: t('admin.resource_fields_page.field_scope_resource'), value: 'resource' },
+  { label: t('admin.resource_fields_page.field_scope_version'), value: 'version' }
+]))
+
 const matchTypeItems = computed(() => ([
   { label: t('admin.resource_fields_page.match_type_none'), value: 'none' },
   { label: t('admin.resource_fields_page.match_type_number'), value: 'number' },
@@ -144,9 +153,25 @@ const matchTypeItems = computed(() => ([
   { label: t('admin.resource_fields_page.match_type_regex'), value: 'regex' }
 ]))
 
+function getDisplayGroupLabel(group: string) {
+  const matched = displayGroupItems.value.find(item => item.value === group)
+  return matched?.label || group
+}
+
+function getFieldTypeLabel(fieldType: string) {
+  const matched = fieldTypeItems.value.find(item => item.value === fieldType)
+  return matched?.label || fieldType
+}
+
+function getFieldScopeLabel(fieldScope: Field['fieldScope']) {
+  const matched = fieldScopeItems.value.find(item => item.value === fieldScope)
+  return matched?.label || fieldScope
+}
+
 const isOpen = ref(false)
 const editing = ref<Field | null>(null)
 const choiceRows = ref<ChoiceRow[]>([])
+const choiceIconUploading = reactive<Record<number, boolean>>({})
 
 const form = reactive<Field>({
   id: '',
@@ -155,12 +180,14 @@ const form = reactive<Field>({
   displayGroup: 'above_info',
   displayGroups: ['above_info'],
   displayOrder: 1,
+  fieldScope: 'resource',
   fieldType: 'textbox',
   fieldChoices: {},
   matchType: 'none',
   matchParams: {},
   required: false,
   maxLength: 0,
+  versionFilterable: false,
   viewableResource: true,
   categoryIds: []
 })
@@ -172,15 +199,18 @@ function resetForm() {
   form.displayGroup = 'above_info'
   form.displayGroups = ['above_info']
   form.displayOrder = 1
+  form.fieldScope = 'resource'
   form.fieldType = 'textbox'
   form.fieldChoices = {}
   form.matchType = 'none'
   form.matchParams = {}
   form.required = false
   form.maxLength = 0
+  form.versionFilterable = false
   form.viewableResource = true
   form.categoryIds = []
   choiceRows.value = []
+  for (const key of Object.keys(choiceIconUploading)) delete choiceIconUploading[Number(key)]
   editing.value = null
 }
 
@@ -197,15 +227,21 @@ function openEdit(f: Field) {
   form.displayGroup = f.displayGroup
   form.displayGroups = [...(f.displayGroups?.length ? f.displayGroups : [f.displayGroup || 'above_info'])]
   form.displayOrder = f.displayOrder
+  form.fieldScope = f.fieldScope ?? 'resource'
   form.fieldType = f.fieldType
   form.fieldChoices = { ...(f.fieldChoices ?? {}) }
   form.matchType = f.matchType ?? 'none'
   form.matchParams = { ...(f.matchParams ?? {}) }
   form.required = f.required
   form.maxLength = f.maxLength
+  form.versionFilterable = Boolean(f.versionFilterable)
   form.viewableResource = f.viewableResource
   form.categoryIds = [...f.categoryIds]
-  choiceRows.value = Object.entries(f.fieldChoices ?? {}).map(([key, label]) => ({ key, label }))
+  choiceRows.value = Object.entries(f.fieldChoices ?? {}).map(([key, choice]) => ({
+    key,
+    label: choice.label,
+    iconUrl: choice.iconUrl || ''
+  }))
   isOpen.value = true
 }
 
@@ -244,7 +280,7 @@ watch(categoryPickerOpen, (open) => {
 })
 
 function addChoiceRow() {
-  choiceRows.value.push({ key: '', label: '' })
+  choiceRows.value.push({ key: '', label: '', iconUrl: '' })
 }
 
 function removeChoiceRow(index: number) {
@@ -304,19 +340,61 @@ function getSaveErrorMessage(error: unknown) {
 }
 
 watch(choiceRows, (rows) => {
-  const out: Record<string, string> = {}
+  const out: NormalizedResourceFieldChoiceRecord = {}
   for (const row of rows) {
     const key = row.key.trim()
     if (!key) continue
     const label = row.label.trim()
-    out[key] = label || key
+    const iconUrl = row.iconUrl.trim()
+    out[key] = {
+      label: label || key,
+      ...(iconUrl ? { iconUrl } : {})
+    }
   }
   form.fieldChoices = out
 }, { deep: true })
 
+async function uploadChoiceIcon(index: number, file: File) {
+  choiceIconUploading[index] = true
+  try {
+    const fd = new FormData()
+    fd.append('kind', 'icon')
+    fd.append('file', file)
+    const res = await $fetch<{ success: boolean, url: string }>('/api/resources/media-upload', {
+      method: 'POST',
+      body: fd
+    })
+    if (choiceRows.value[index]) {
+      choiceRows.value[index].iconUrl = res.url
+    }
+  } catch {
+    toast.add({
+      title: t('common.error'),
+      description: t('admin.resource_fields_page.choice_icon_upload_failed'),
+      color: 'error'
+    })
+  } finally {
+    choiceIconUploading[index] = false
+  }
+}
+
+async function onPickChoiceIcon(index: number, event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file) return
+  await uploadChoiceIcon(index, file)
+  if (input) input.value = ''
+}
+
 watch(() => form.fieldType, (next) => {
-  if (next !== 'select') return
+  if (!['select', 'radio', 'checkbox', 'multiselect'].includes(next)) return
   if (choiceRows.value.length === 0) addChoiceRow()
+})
+
+watch(() => [form.fieldScope, form.fieldType] as const, ([fieldScope, fieldType]) => {
+  if (fieldScope !== 'version' || !['select', 'radio', 'checkbox', 'multiselect'].includes(fieldType)) {
+    form.versionFilterable = false
+  }
 })
 
 async function save() {
@@ -410,14 +488,51 @@ async function removeField(id: string) {
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <div class="font-semibold">
-              {{ f.title }}
+            <div class="flex items-center gap-2">
+              <div class="font-semibold">
+                {{ f.title }}
+              </div>
+              <div class="text-xs font-mono text-(--ui-text-muted)">
+                {{ f.id }}
+              </div>
             </div>
-            <div class="text-xs text-muted font-mono">
-              {{ f.id }} · {{ (f.displayGroups?.length ? f.displayGroups : [f.displayGroup]).join(', ') }} · {{ f.fieldType }}
+            <div
+              v-if="f.description"
+              class="mt-1 text-sm text-(--ui-text-muted)"
+            >
+              {{ f.description }}
+            </div>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <UBadge
+                color="secondary"
+                variant="subtle"
+              >
+                {{ getFieldScopeLabel(f.fieldScope) }}
+              </UBadge>
+              <UBadge
+                v-for="group in (f.displayGroups?.length ? f.displayGroups : [f.displayGroup])"
+                :key="`${f.id}-group-${group}`"
+                color="neutral"
+                variant="subtle"
+              >
+                {{ getDisplayGroupLabel(group) }}
+              </UBadge>
+              <UBadge
+                color="primary"
+                variant="subtle"
+              >
+                {{ getFieldTypeLabel(f.fieldType) }}
+              </UBadge>
+              <UBadge
+                v-if="f.versionFilterable"
+                color="warning"
+                variant="subtle"
+              >
+                {{ t('admin.resource_fields_page.field_version_filterable') }}
+              </UBadge>
             </div>
             <div class="text-xs text-muted mt-1">
-              {{ categories.filter(c => f.categoryIds.includes(c.id)).map(c => c.name).join(' / ') || '-' }}
+              {{ t('admin.resource_fields_page.field_parent_categories', { categories: categories.filter(c => f.categoryIds.includes(c.id)).map(c => c.name).join(' / ') || '-' }) }}
             </div>
           </div>
           <div class="flex gap-2">
@@ -482,6 +597,15 @@ async function removeField(id: string) {
               multiple
             />
           </UFormField>
+          <UFormField :label="t('admin.resource_fields_page.field_scope')">
+            <USelect
+              v-model="form.fieldScope"
+              class="w-full"
+              :items="fieldScopeItems"
+              label-key="label"
+              value-key="value"
+            />
+          </UFormField>
           <UFormField :label="t('admin.resource_fields_page.field_type')">
             <USelect
               v-model="form.fieldType"
@@ -514,22 +638,56 @@ async function removeField(id: string) {
               <div
                 v-for="(row, idx) in choiceRows"
                 :key="`choice-${idx}`"
-                class="grid grid-cols-[1fr_1fr_auto] gap-2"
+                class="rounded-md border border-(--ui-border) p-3"
               >
-                <UInput
-                  v-model="row.key"
-                  :placeholder="t('admin.resource_fields_page.choice_key_placeholder')"
-                />
-                <UInput
-                  v-model="row.label"
-                  :placeholder="t('admin.resource_fields_page.choice_label_placeholder')"
-                />
-                <UButton
-                  color="error"
-                  variant="ghost"
-                  icon="i-lucide-trash-2"
-                  @click="removeChoiceRow(idx)"
-                />
+                <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <UInput
+                    v-model="row.key"
+                    :placeholder="t('admin.resource_fields_page.choice_key_placeholder')"
+                  />
+                  <UInput
+                    v-model="row.label"
+                    :placeholder="t('admin.resource_fields_page.choice_label_placeholder')"
+                  />
+                </div>
+                <div class="mt-3 flex flex-wrap items-center gap-3">
+                  <div
+                    v-if="row.iconUrl"
+                    class="inline-flex size-9 items-center justify-center overflow-hidden rounded-md border border-(--ui-border) bg-(--ui-bg-elevated)"
+                  >
+                    <img
+                      :src="row.iconUrl"
+                      :alt="row.label || row.key"
+                      class="size-full object-cover"
+                    >
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <UInput
+                      type="file"
+                      accept="image/*"
+                      size="sm"
+                      :disabled="choiceIconUploading[idx]"
+                      @change="onPickChoiceIcon(idx, $event)"
+                    />
+                    <UButton
+                      v-if="row.iconUrl"
+                      color="neutral"
+                      variant="ghost"
+                      size="sm"
+                      @click="row.iconUrl = ''"
+                    >
+                      {{ t('admin.resource_fields_page.choice_icon_remove') }}
+                    </UButton>
+                  </div>
+                  <div class="ms-auto">
+                    <UButton
+                      color="error"
+                      variant="ghost"
+                      icon="i-lucide-trash-2"
+                      @click="removeChoiceRow(idx)"
+                    />
+                  </div>
+                </div>
               </div>
               <UButton
                 color="neutral"
@@ -564,6 +722,11 @@ async function removeField(id: string) {
           <UCheckbox
             v-model="form.required"
             :label="t('admin.resource_fields_page.field_required')"
+          />
+          <UCheckbox
+            v-if="form.fieldScope === 'version' && ['select', 'radio', 'checkbox', 'multiselect'].includes(form.fieldType)"
+            v-model="form.versionFilterable"
+            :label="t('admin.resource_fields_page.field_version_filterable')"
           />
           <UCheckbox
             v-model="form.viewableResource"

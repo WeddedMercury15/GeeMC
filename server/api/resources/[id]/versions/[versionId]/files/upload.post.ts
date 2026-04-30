@@ -1,5 +1,5 @@
 import { and, count, eq } from 'drizzle-orm'
-import { resourceVersionFiles } from '../../../../../../database/schema'
+import { resourceVersionFiles, resources } from '../../../../../../database/schema'
 import { useDb } from '../../../../../../utils/db'
 import { requireGeemcPublish } from '../../../../../../utils/requireGeemcPublish'
 import { storePublicUpload } from '../../../../../../utils/fileStorage'
@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const form = await readMultipartFormData(event)
-  const filePart = form?.find(p => p.type === 'file')
+  const filePart = form?.find(p => p.name === 'file' && !!p.filename)
   if (!filePart || !('data' in filePart) || !filePart.data) {
     throw createError({ statusCode: 400, statusMessage: 'Missing file' })
   }
@@ -62,6 +62,13 @@ export default defineEventHandler(async (event) => {
     publicUrl: stored.publicUrl,
     createdAt: now
   })
+
+  if (existingCount === 0) {
+    await db
+      .update(resources)
+      .set({ updateDate: now, lastUpdate: now })
+      .where(eq(resources.id, resourceId))
+  }
 
   return { success: true, url: stored.publicUrl }
 })

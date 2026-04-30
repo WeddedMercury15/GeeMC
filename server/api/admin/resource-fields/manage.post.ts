@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { categoryFields, resourceFields } from '../../../database/schema'
 import { useDb } from '../../../utils/db'
 import { requireGeemcAdmin } from '../../../utils/requireGeemcAdmin'
+import { normalizeResourceFieldChoices } from '../../../utils/resourceFieldChoices'
 
 const DISPLAY_GROUP_VALUES = ['above_info', 'below_info', 'above_rating', 'below_rating', 'below_sidebar_buttons', 'sidebar', 'extra_tab', 'new_tab'] as const
 
@@ -11,20 +12,43 @@ function normalizeDisplayGroups(groups: string[]) {
   return next.length > 0 ? next : ['above_info']
 }
 
+const choiceSchema = z.object({
+  label: z.string().min(1).max(255),
+  iconUrl: z.string().max(2048).optional()
+})
+
 const fieldSchema = z.object({
   id: z.string().min(1).max(25),
   title: z.string().min(1).max(255),
   description: z.string().max(1024).optional(),
   displayGroups: z.array(z.enum(DISPLAY_GROUP_VALUES)).min(1).max(DISPLAY_GROUP_VALUES.length),
   displayOrder: z.number().int().min(0),
+  fieldScope: z.enum(['resource', 'version']).default('resource'),
   fieldType: z.enum(['textbox', 'textarea', 'select', 'radio', 'checkbox', 'multiselect']),
-  fieldChoices: z.record(z.string(), z.string()).optional(),
+  fieldChoices: z.record(z.string(), choiceSchema).optional(),
   matchType: z.enum(['none', 'number', 'alphanumeric', 'email', 'url', 'regex']).default('none'),
   matchParams: z.record(z.string(), z.string()).optional(),
   required: z.boolean(),
   maxLength: z.number().int().min(0),
+  versionFilterable: z.boolean().default(false),
   viewableResource: z.boolean(),
   categoryIds: z.array(z.number().int().positive())
+}).superRefine((value, ctx) => {
+  if (!value.versionFilterable) return
+  if (value.fieldScope !== 'version') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['versionFilterable'],
+      message: 'Only version fields can be used as version filters'
+    })
+  }
+  if (!['select', 'radio', 'checkbox', 'multiselect'].includes(value.fieldType)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['fieldType'],
+      message: 'Only selectable fields can be used as version filters'
+    })
+  }
 })
 
 const payloadSchema = z.discriminatedUnion('intent', [
@@ -71,12 +95,14 @@ export default defineEventHandler(async (event) => {
       description: p.data.description ?? '',
       displayGroup: normalizeDisplayGroups(p.data.displayGroups).join(','),
       displayOrder: p.data.displayOrder,
+      fieldScope: p.data.fieldScope,
       fieldType: p.data.fieldType,
-      fieldChoices: p.data.fieldChoices ?? {},
+      fieldChoices: normalizeResourceFieldChoices(p.data.fieldChoices ?? {}),
       matchType: p.data.matchType,
       matchParams: p.data.matchParams ?? {},
       required: p.data.required,
       maxLength: p.data.maxLength,
+      versionFilterable: p.data.versionFilterable,
       viewableResource: p.data.viewableResource
     })
 
@@ -102,12 +128,14 @@ export default defineEventHandler(async (event) => {
       description: p.data.description ?? '',
       displayGroup: normalizeDisplayGroups(p.data.displayGroups).join(','),
       displayOrder: p.data.displayOrder,
+      fieldScope: p.data.fieldScope,
       fieldType: p.data.fieldType,
-      fieldChoices: p.data.fieldChoices ?? {},
+      fieldChoices: normalizeResourceFieldChoices(p.data.fieldChoices ?? {}),
       matchType: p.data.matchType,
       matchParams: p.data.matchParams ?? {},
       required: p.data.required,
       maxLength: p.data.maxLength,
+      versionFilterable: p.data.versionFilterable,
       viewableResource: p.data.viewableResource
     })
     .where(eq(resourceFields.id, p.fieldId))

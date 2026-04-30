@@ -6,9 +6,8 @@ import { requireGeemcPublish } from '../../../../../utils/requireGeemcPublish'
 import { canManageResourceByTeam } from '../../../../../utils/resourceTeam'
 
 const payloadSchema = z.object({
-  title: z.string().max(255).default(''),
   versionString: z.string().max(255).default(''),
-  updateType: z.enum(['update', 'release', 'snapshot']).default('update'),
+  updateType: z.enum(['update', 'release', 'beta', 'alpha']).default('update'),
   message: z.string().min(1)
 })
 
@@ -87,7 +86,7 @@ export default defineEventHandler(async (event) => {
   await db
     .update(resourceUpdates)
     .set({
-      title: p.title ?? '',
+      title: '',
       versionString: p.versionString ?? '',
       updateType: p.updateType,
       message: p.message,

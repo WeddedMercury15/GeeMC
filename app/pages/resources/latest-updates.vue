@@ -34,7 +34,8 @@ const total = computed(() => Number(data.value?.total ?? 0))
 
 function updateTypeLabel(type: string) {
   if (type === 'release') return t('resources.version_type_release')
-  if (type === 'snapshot') return t('resources.version_type_snapshot')
+  if (type === 'alpha') return t('resources.version_type_alpha')
+  if (type === 'beta') return t('resources.version_type_beta')
   return t('resources.update_type_update')
 }
 </script>

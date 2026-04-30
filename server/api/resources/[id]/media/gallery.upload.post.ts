@@ -12,8 +12,8 @@ export default defineEventHandler(async (event) => {
   if (!resourceId) throw createError({ statusCode: 400, statusMessage: 'Missing id' })
 
   const form = await readMultipartFormData(event)
-  const filePart = form?.find(p => p.type === 'file')
-  const captionPart = form?.find(p => p.type === 'field' && p.name === 'caption')
+  const filePart = form?.find(p => p.name === 'file' && !!p.filename)
+  const captionPart = form?.find(p => p.name === 'caption' && !p.filename)
   if (!filePart || !('data' in filePart) || !filePart.data) {
     throw createError({ statusCode: 400, statusMessage: 'Missing file' })
   }
@@ -50,4 +50,3 @@ export default defineEventHandler(async (event) => {
 
   return { success: true, url: stored.publicUrl }
 })
-

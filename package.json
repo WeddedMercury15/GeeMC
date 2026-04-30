@@ -13,18 +13,18 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@iconify-json/lucide": "^1.2.103",
-    "@iconify-json/simple-icons": "^1.2.79",
+    "@iconify-json/lucide": "^1.2.105",
+    "@iconify-json/simple-icons": "^1.2.80",
     "@libsql/client": "^0.17.3",
-    "@nuxt/ui": "^4.7.0",
+    "@nuxt/ui": "^4.7.1",
     "@nuxtjs/i18n": "^10.3.0",
     "@tanstack/table-core": "8.21.3",
     "drizzle-orm": "1.0.0-beta.21",
     "gsap": "^3.15.0",
-    "mysql2": "^3.22.2",
-    "nuxt": "^4.4.2",
+    "mysql2": "^3.22.3",
+    "nuxt": "^4.4.4",
     "tailwindcss": "^4.2.4",
-    "zod": "^4.3.6"
+    "zod": "^4.4.1"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.15.2",

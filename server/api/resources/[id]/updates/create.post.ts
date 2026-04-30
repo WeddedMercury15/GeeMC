@@ -8,9 +8,8 @@ import { encodeNotificationMessage, notifyResourceFollowers } from '../../../../
 import { canManageResourceByTeam } from '../../../../utils/resourceTeam'
 
 const payloadSchema = z.object({
-  title: z.string().max(255).default(''),
   versionString: z.string().max(255).default(''),
-  updateType: z.enum(['update', 'release', 'snapshot']).default('update'),
+  updateType: z.enum(['update', 'release', 'beta', 'alpha']).default('update'),
   message: z.string().min(1)
 })
 
@@ -68,7 +67,7 @@ export default defineEventHandler(async (event) => {
 
   await db.insert(resourceUpdates).values({
     resourceId,
-    title: p.title ?? '',
+    title: '',
     message: p.message,
     messageHtml: p.message,
     postDate: now,
@@ -102,7 +101,7 @@ export default defineEventHandler(async (event) => {
     type: 'resource_update',
     title: resourceRow.title,
     message: encodeNotificationMessage({
-      text: p.title?.trim() ? p.title : 'Resource update published',
+      text: 'Resource update published',
       target: latestUpdate?.id ? { tab: 'changelog', anchor: `update-${latestUpdate.id}` } : { tab: 'changelog' }
     })
   })

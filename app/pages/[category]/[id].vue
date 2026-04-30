@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ResourceDetail, ResourceVersion } from '~/utils/resourceCatalog'
+import type { ResourceDetail, ResourceVersion, ResourceVersionFieldDefinition } from '~/utils/resourceCatalog'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,25 +37,19 @@ const showManageUi = computed(() => canManageResource.value && isManageMode.valu
 const detailPath = computed(() => `/resources/${id.value}`)
 
 const updateForm = reactive({
-  title: '',
   versionString: '',
-  updateType: 'update' as 'update' | 'release' | 'snapshot',
+  updateType: 'update' as 'update' | 'release' | 'beta' | 'alpha',
   message: ''
 })
 const submittingUpdate = ref(false)
 
 const versionForm = reactive({
   name: '',
-  type: 'release' as 'release' | 'snapshot',
-  size: '0 MB',
-  gameVersionsRaw: '',
-  loadersRaw: '',
-  serverTypesRaw: '',
-  updateTitle: '',
-  updateMessage: '',
-  updateType: 'release' as 'update' | 'release' | 'snapshot'
+  type: 'release' as 'release' | 'beta' | 'alpha',
+  updateMessage: ''
 })
 const submittingVersion = ref(false)
+const versionFieldFormValues = reactive<Record<string, string | string[]>>({})
 
 const editDescOpen = ref(false)
 const editDescText = ref('')
@@ -64,9 +58,8 @@ const submittingDesc = ref(false)
 const editUpdateOpen = ref(false)
 const editUpdateId = ref<number | null>(null)
 const editUpdateForm = reactive({
-  title: '',
   versionString: '',
-  updateType: 'update' as 'update' | 'release' | 'snapshot',
+  updateType: 'update' as 'update' | 'release' | 'beta' | 'alpha',
   message: ''
 })
 const submittingEditUpdate = ref(false)
@@ -187,14 +180,12 @@ function validateBasicForm() {
 
 function validateUpdateForm() {
   if (!updateForm.message.trim()) return t('validation.required_label', { label: t('resources.update_message') })
-  if (updateForm.title.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_title'), max: 255 })
   if (updateForm.versionString.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_version'), max: 255 })
   return null
 }
 
 function validateEditUpdateForm() {
   if (!editUpdateForm.message.trim()) return t('validation.required_label', { label: t('resources.update_message') })
-  if (editUpdateForm.title.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_title'), max: 255 })
   if (editUpdateForm.versionString.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_version'), max: 255 })
   return null
 }
@@ -202,10 +193,24 @@ function validateEditUpdateForm() {
 function validateVersionForm() {
   if (!versionForm.name.trim()) return t('validation.required_label', { label: t('resources.publish.version_name') })
   if (versionForm.name.trim().length > 255) return t('validation.max_length_label', { label: t('resources.publish.version_name'), max: 255 })
-  if (!versionForm.size.trim()) return t('validation.required_label', { label: t('resources.publish.size') })
-  if (versionForm.size.trim().length > 64) return t('validation.max_length_label', { label: t('resources.publish.size'), max: 64 })
   if (!versionForm.updateMessage.trim()) return t('validation.required_label', { label: t('resources.update_message') })
-  if (versionForm.updateTitle.trim().length > 255) return t('validation.max_length_label', { label: t('resources.update_title'), max: 255 })
+
+  for (const field of versionFieldDefinitions.value) {
+    const rawValue = versionFieldFormValues[field.id]
+    const value = Array.isArray(rawValue) ? rawValue.join(',').trim() : String(rawValue ?? '').trim()
+    if (field.required && !value) return t('validation.required_label', { label: field.title })
+    if (!value) continue
+    if ((field.fieldType === 'select' || field.fieldType === 'radio') && !getFieldChoiceItem(field, value)) {
+      return t('validation.invalid_choice_label', { label: field.title })
+    }
+    if (field.fieldType === 'checkbox' || field.fieldType === 'multiselect') {
+      const values = splitStoredFieldValue(value)
+      if (values.some(item => !getFieldChoiceItem(field, item))) {
+        return t('validation.invalid_choice_label', { label: field.title })
+      }
+    }
+  }
+
   return null
 }
 
@@ -724,16 +729,6 @@ async function onPickedReplaceFile() {
   }
 }
 
-function formatBytes(bytes: number) {
-  const n = Number(bytes ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const exp = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)))
-  const value = n / Math.pow(1024, exp)
-  const fixed = exp === 0 ? 0 : (value >= 10 ? 1 : 2)
-  return `${value.toFixed(fixed)} ${units[exp]}`
-}
-
 const isResourceVisible = computed(() => (resource.value?.resourceState ?? 'visible') === 'visible')
 const isResourceDeleted = computed(() => (resource.value?.resourceState ?? 'visible') === 'deleted')
 
@@ -798,6 +793,42 @@ async function reportVersion(versionId: number | undefined) {
   } catch (error) {
     toast.add({ title: t('common.error'), description: getReviewMutationErrorMessage(error, t('resources.version_report_failed')), color: 'error' })
   }
+}
+
+function openVersionPermalink(versionId: number) {
+  void navigateTo(`/versions/${versionId}`)
+}
+
+function getVersionMenuItems(versionId: number) {
+  const items: Array<{
+    label: string
+    icon?: string
+    color?: 'error' | 'primary' | 'secondary' | 'success' | 'info' | 'warning' | 'neutral'
+    onSelect: (e?: Event) => void
+  }> = [
+    {
+      label: t('resources.open_version_permalink'),
+      icon: 'i-lucide-link',
+      onSelect(e?: Event) {
+        e?.preventDefault()
+        openVersionPermalink(versionId)
+      }
+    }
+  ]
+
+  if (!showManageUi.value && auth.isLoggedIn.value) {
+    items.push({
+      label: t('resources.version_report'),
+      icon: 'i-lucide-flag',
+      color: 'warning',
+      onSelect(e?: Event) {
+        e?.preventDefault()
+        reportVersion(versionId)
+      }
+    })
+  }
+
+  return items
 }
 
 async function voteUpdate(updateId: number | undefined) {
@@ -1167,7 +1198,6 @@ async function submitUpdate() {
       method: 'POST',
       body: { ...updateForm }
     })
-    updateForm.title = ''
     updateForm.versionString = ''
     updateForm.updateType = 'update'
     updateForm.message = ''
@@ -1177,7 +1207,6 @@ async function submitUpdate() {
     toast.add({
       title: t('common.error'),
       description: getResourceMutationErrorMessage(error, t('resources.update_publish_failed'), {
-        title: t('resources.update_title'),
         versionString: t('resources.update_version'),
         updateType: t('resources.update_type'),
         message: t('resources.update_message')
@@ -1192,9 +1221,14 @@ async function submitUpdate() {
 function openEditUpdate(log: any) {
   if (!showManageUi.value) return
   editUpdateId.value = Number(log?.id)
-  editUpdateForm.title = log?.title ?? ''
   editUpdateForm.versionString = log?.version ?? ''
-  editUpdateForm.updateType = (log?.updateType === 'snapshot' ? 'snapshot' : (log?.updateType === 'release' ? 'release' : 'update'))
+  editUpdateForm.updateType = (
+    log?.updateType === 'alpha'
+      ? 'alpha'
+      : (log?.updateType === 'beta'
+          ? 'beta'
+          : (log?.updateType === 'release' ? 'release' : 'update'))
+  )
   editUpdateForm.message = log?.message ?? ''
   editUpdateOpen.value = true
 }
@@ -1212,7 +1246,6 @@ async function submitEditUpdate() {
     await $fetch(`/api/resources/${id.value}/updates/${editUpdateId.value}/update`, {
       method: 'POST',
       body: {
-        title: editUpdateForm.title,
         versionString: editUpdateForm.versionString,
         updateType: editUpdateForm.updateType,
         message: editUpdateForm.message
@@ -1225,7 +1258,6 @@ async function submitEditUpdate() {
     toast.add({
       title: t('common.error'),
       description: getResourceMutationErrorMessage(error, t('resources.update_save_failed'), {
-        title: t('resources.update_title'),
         versionString: t('resources.update_version'),
         updateType: t('resources.update_type'),
         message: t('resources.update_message')
@@ -1265,10 +1297,6 @@ async function confirmDeleteUpdate() {
   }
 }
 
-function parseCsv(raw: string): string[] {
-  return raw.split(',').map(x => x.trim()).filter(Boolean)
-}
-
 async function submitVersion() {
   if (!canManageResource.value) return
   const validationMessage = validateVersionForm()
@@ -1283,24 +1311,19 @@ async function submitVersion() {
       body: {
         name: versionForm.name,
         type: versionForm.type,
-        size: versionForm.size,
-        gameVersions: parseCsv(versionForm.gameVersionsRaw),
-        loaders: parseCsv(versionForm.loadersRaw),
-        serverTypes: parseCsv(versionForm.serverTypesRaw),
-        updateTitle: versionForm.updateTitle,
-        updateMessage: versionForm.updateMessage,
-        updateType: versionForm.updateType
+        gameVersions: [],
+        loaders: [],
+        serverTypes: [],
+        versionCustomFields: serializeVersionFieldValues(),
+        updateMessage: versionForm.updateMessage
       }
     })
     versionForm.name = ''
     versionForm.type = 'release'
-    versionForm.size = '0 MB'
-    versionForm.gameVersionsRaw = ''
-    versionForm.loadersRaw = ''
-    versionForm.serverTypesRaw = ''
-    versionForm.updateTitle = ''
     versionForm.updateMessage = ''
-    versionForm.updateType = 'release'
+    for (const field of versionFieldDefinitions.value) {
+      versionFieldFormValues[field.id] = field.fieldType === 'checkbox' || field.fieldType === 'multiselect' ? [] : ''
+    }
     await refreshNuxtData(`resource-${route.params.category}-${id.value}`)
     toast.add({ title: t('common.success'), description: t('resources.version_published'), color: 'success' })
   } catch (error) {
@@ -1309,13 +1332,7 @@ async function submitVersion() {
       description: getResourceMutationErrorMessage(error, t('resources.version_publish_failed'), {
         name: t('resources.publish.version_name'),
         type: t('resources.version_type_release'),
-        size: t('resources.publish.size'),
-        gameVersions: t('resources.publish.game_versions'),
-        loaders: t('resources.publish.loaders'),
-        serverTypes: t('resources.publish.server_types'),
-        updateTitle: t('resources.update_title'),
-        updateMessage: t('resources.update_message'),
-        updateType: t('resources.update_type')
+        updateMessage: t('resources.update_message')
       }),
       color: 'error'
     })
@@ -1364,11 +1381,102 @@ const tabItems = computed(() => [
 const versionTypeItems = computed(() => [
   { label: t('resources.version_type_all'), value: 'all' },
   { label: t('resources.version_type_release'), value: 'release' },
-  { label: t('resources.version_type_snapshot'), value: 'snapshot' }
+  { label: t('resources.version_type_beta'), value: 'beta' },
+  { label: t('resources.version_type_alpha'), value: 'alpha' }
 ])
 
-const versionTypeLabel = (type: 'release' | 'snapshot') =>
-  type === 'release' ? t('resources.version_type_release') : t('resources.version_type_snapshot')
+const versionTypeLabel = (type: 'release' | 'beta' | 'alpha') =>
+  type === 'alpha'
+    ? t('resources.version_type_alpha')
+    : (type === 'beta' ? t('resources.version_type_beta') : t('resources.version_type_release'))
+
+const versionTypeMarker = (type: 'release' | 'beta' | 'alpha') =>
+  type === 'alpha' ? 'A' : (type === 'beta' ? 'B' : 'R')
+
+const versionTypeMarkerClass = (type: 'release' | 'beta' | 'alpha') =>
+  type === 'alpha'
+    ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+    : (type === 'beta'
+        ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300')
+
+function splitStoredFieldValue(value: string) {
+  return String(value || '').split(',').map(item => item.trim()).filter(Boolean)
+}
+
+const versionFieldDefinitions = computed<ResourceVersionFieldDefinition[]>(() => resource.value?.versionFieldDefinitions ?? [])
+const versionListFieldDefinitions = computed(() =>
+  versionFieldDefinitions.value.filter(field => field.viewableResource)
+)
+const filterableVersionFieldDefinitions = computed(() =>
+  versionFieldDefinitions.value.filter(field => field.versionFilterable)
+)
+
+function serializeVersionFieldValues() {
+  return Object.fromEntries(
+    Object.entries(versionFieldFormValues).map(([fieldId, rawValue]) => [
+      fieldId,
+      Array.isArray(rawValue) ? rawValue.join(',') : String(rawValue ?? '').trim()
+    ])
+  )
+}
+
+function fieldChoiceItems(field: ResourceVersionFieldDefinition) {
+  return Object.entries(field.fieldChoices ?? {}).map(([value, choice]) => ({
+    value,
+    label: choice.label,
+    iconUrl: choice.iconUrl
+  }))
+}
+
+function getFieldChoiceItem(field: ResourceVersionFieldDefinition, value: string) {
+  return fieldChoiceItems(field).find(item => item.value === value)
+}
+
+function isVersionFieldChoiceChecked(fieldId: string, value: string) {
+  const current = versionFieldFormValues[fieldId]
+  return Array.isArray(current) ? current.includes(value) : false
+}
+
+function setVersionFieldChoiceChecked(fieldId: string, value: string, checked: boolean) {
+  const current = Array.isArray(versionFieldFormValues[fieldId]) ? [...versionFieldFormValues[fieldId] as string[]] : []
+  const next = checked ? Array.from(new Set([...current, value])) : current.filter(item => item !== value)
+  versionFieldFormValues[fieldId] = next
+}
+
+function getVersionFieldValues(version: ResourceVersion, field: ResourceVersionFieldDefinition) {
+  const rawValue = String(version.customFields?.[field.id] ?? '').trim()
+  if (!rawValue) return []
+  if (field.fieldType === 'checkbox' || field.fieldType === 'multiselect') {
+    return splitStoredFieldValue(rawValue)
+  }
+  return [rawValue]
+}
+
+function getVersionFieldDisplayItems(version: ResourceVersion) {
+  return versionFieldDefinitions.value
+    .filter(field => field.viewableResource)
+    .flatMap((field) => {
+      const values = getVersionFieldValues(version, field)
+      return values.map((value) => {
+        const choice = getFieldChoiceItem(field, value)
+        return {
+          key: `${field.id}-${value}`,
+          fieldTitle: field.title,
+          label: choice?.label || value,
+          iconUrl: choice?.iconUrl
+        }
+      })
+    })
+}
+
+const availableVersionFieldFilterItems = computed<Record<string, { value: string, label: string, iconUrl?: string }[]>>(() => {
+  const out: Record<string, { value: string, label: string, iconUrl?: string }[]> = {}
+  for (const field of filterableVersionFieldDefinitions.value) {
+    out[field.id] = fieldChoiceItems(field)
+  }
+  return out
+})
 
 function taxonomyEditionLabel(ed: string) {
   const k = `resources.taxonomy.edition_${ed}`
@@ -1388,12 +1496,6 @@ function taxonomyEnvLabel(env: string) {
   return tr !== k ? tr : env
 }
 
-const isJavaMod = computed(
-  () => resource.value?.taxonomy.edition === 'java' && resource.value?.taxonomy.kind === 'mod'
-)
-const isJavaPlugin = computed(
-  () => resource.value?.taxonomy.edition === 'java' && resource.value?.taxonomy.kind === 'plugin'
-)
 const isDownloadableResource = computed(() => resource.value?.resourceType === 'download')
 const isExternalResource = computed(() => resource.value?.resourceType === 'external')
 const isExternalPurchaseResource = computed(() => resource.value?.resourceType === 'external_purchase')
@@ -1468,10 +1570,8 @@ watch(
   }
 )
 
-const versionType = ref<'all' | 'release' | 'snapshot'>('all')
-const filterGameVersion = ref<string>('')
-const filterLoader = ref<string>('')
-const filterServerType = ref<string>('')
+const versionType = ref<'all' | 'release' | 'beta' | 'alpha'>('all')
+const selectedVersionFieldFilters = reactive<Record<string, string>>({})
 
 const isFollowed = ref(Boolean(resource.value?.isFollowed))
 const followersCount = ref(Number(resource.value?.followers ?? 0))
@@ -1484,9 +1584,7 @@ const reviewForm = reactive({
 })
 const reviewReplyForms = reactive<Record<number, string>>({})
 
-const quickGameVersion = ref('')
-const quickLoader = ref('')
-const quickServerType = ref('')
+const quickVersionFieldFilters = reactive<Record<string, string>>({})
 
 const canSubmitReview = computed(() => {
   if (!auth.isLoggedIn.value) return false
@@ -1512,6 +1610,35 @@ watchEffect(() => {
   const names = (resource.value?.teamMembers ?? []).map(m => m.username)
   teamMemberNamesInput.value = names.join(', ')
 })
+
+watch(versionFieldDefinitions, (fields) => {
+  const validFieldIds = new Set(fields.map(field => field.id))
+  for (const key of Object.keys(versionFieldFormValues)) {
+    if (!validFieldIds.has(key)) delete versionFieldFormValues[key]
+  }
+  for (const field of fields) {
+    const current = versionFieldFormValues[field.id]
+    if (field.fieldType === 'checkbox' || field.fieldType === 'multiselect') {
+      if (!Array.isArray(current)) versionFieldFormValues[field.id] = []
+      continue
+    }
+    if (Array.isArray(current)) {
+      versionFieldFormValues[field.id] = current.join(',')
+      continue
+    }
+    if (typeof current !== 'string') versionFieldFormValues[field.id] = ''
+  }
+}, { immediate: true })
+
+watch(filterableVersionFieldDefinitions, (fields) => {
+  const validFieldIds = new Set(fields.map(field => field.id))
+  for (const key of Object.keys(selectedVersionFieldFilters)) {
+    if (!validFieldIds.has(key)) delete selectedVersionFieldFilters[key]
+  }
+  for (const key of Object.keys(quickVersionFieldFilters)) {
+    if (!validFieldIds.has(key)) delete quickVersionFieldFilters[key]
+  }
+}, { immediate: true })
 
 async function saveTeamMembers() {
   if (!isOwner.value && !auth.canAdmin.value) return
@@ -1705,31 +1832,15 @@ async function toggleFollow() {
   }
 }
 
-const availableGameVersions = computed(() => {
-  const s = new Set<string>()
-  resource.value?.versions.forEach(v => v.gameVersions?.forEach(g => s.add(g)))
-  return Array.from(s).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-})
-
-const availableLoaders = computed(() => {
-  const s = new Set<string>()
-  resource.value?.versions.forEach(v => v.loaders?.forEach(l => s.add(l)))
-  return Array.from(s)
-})
-
-const availableServers = computed(() => {
-  const s = new Set<string>()
-  resource.value?.versions.forEach(v => v.serverTypes?.forEach(t => s.add(t)))
-  return Array.from(s)
-})
-
 const filteredVersions = computed(() => {
   let list = [...(resource.value?.versions || [])]
 
   if (versionType.value !== 'all') list = list.filter(v => v.type === versionType.value)
-  if (filterGameVersion.value) list = list.filter(v => v.gameVersions?.includes(filterGameVersion.value))
-  if (isJavaMod.value && filterLoader.value) list = list.filter(v => v.loaders?.includes(filterLoader.value))
-  if (isJavaPlugin.value && filterServerType.value) list = list.filter(v => v.serverTypes?.includes(filterServerType.value))
+  for (const field of filterableVersionFieldDefinitions.value) {
+    const selectedValue = String(selectedVersionFieldFilters[field.id] ?? '').trim()
+    if (!selectedValue) continue
+    list = list.filter(version => getVersionFieldValues(version, field).includes(selectedValue))
+  }
 
   return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 })
@@ -1738,12 +1849,12 @@ const changelogGroups = computed(() => {
   const groups: {
     key: string
     version: string
-    type: 'release' | 'snapshot'
+    type: 'release' | 'beta' | 'alpha'
     date: string
     items: typeof resource.value.changelogs
   }[] = []
 
-  const byVersionId = new Map<number, { key: string, version: string, type: 'release' | 'snapshot', date: string, items: typeof resource.value.changelogs }>()
+  const byVersionId = new Map<number, { key: string, version: string, type: 'release' | 'beta' | 'alpha', date: string, items: typeof resource.value.changelogs }>()
 
   for (const log of resource.value.changelogs) {
     const vid = log.resourceVersionId
@@ -1779,19 +1890,20 @@ const changelogGroups = computed(() => {
 })
 
 const isAllFieldsSelected = computed(() => {
-  if (!quickGameVersion.value) return false
-  if (isJavaMod.value && !quickLoader.value) return false
-  if (isJavaPlugin.value && !quickServerType.value) return false
-  return true
+  if (filterableVersionFieldDefinitions.value.length === 0) return true
+  return filterableVersionFieldDefinitions.value.every(field => String(quickVersionFieldFilters[field.id] ?? '').trim())
 })
 
 const quickTargetVersion = computed<ResourceVersion | null>(() => {
   if (!resource.value) return null
   if (!isAllFieldsSelected.value) return null
 
-  let list = resource.value.versions.filter(v => v.gameVersions?.includes(quickGameVersion.value))
-  if (isJavaMod.value) list = list.filter(v => v.loaders?.includes(quickLoader.value))
-  if (isJavaPlugin.value) list = list.filter(v => v.serverTypes?.includes(quickServerType.value))
+  let list = [...resource.value.versions]
+  for (const field of filterableVersionFieldDefinitions.value) {
+    const selectedValue = String(quickVersionFieldFilters[field.id] ?? '').trim()
+    if (!selectedValue) continue
+    list = list.filter(version => getVersionFieldValues(version, field).includes(selectedValue))
+  }
   if (list.length === 0) return null
   // Prefer versions that already have uploaded files, then newest.
   return list.sort((a, b) => {
@@ -2045,7 +2157,7 @@ const leaveManagePage = () => {
             <div class="w-full md:w-72">
               <div class="flex flex-col gap-2">
                 <UButton
-                  v-if="isDownloadableResource"
+                  v-if="!showManageUi && isDownloadableResource"
                   color="primary"
                   size="lg"
                   icon="i-lucide-download"
@@ -2101,9 +2213,10 @@ const leaveManagePage = () => {
                   icon="i-lucide-pencil"
                   @click="openBasicEditModal"
                 >
-                  {{ t('resources.edit_basic') }}
+                  {{ t('resources.edit_info') }}
                 </UButton>
                 <UButton
+                  v-if="!showManageUi"
                   color="neutral"
                   variant="outline"
                   size="lg"
@@ -2116,7 +2229,7 @@ const leaveManagePage = () => {
                   v-if="showManageUi && !isResourceDeleted && isResourceVisible"
                   color="warning"
                   variant="outline"
-                  size="sm"
+                  size="lg"
                   icon="i-lucide-eye-off"
                   @click="openResourceStateConfirm('hide')"
                 >
@@ -2126,7 +2239,7 @@ const leaveManagePage = () => {
                   v-if="showManageUi && !isResourceVisible"
                   color="success"
                   variant="outline"
-                  size="sm"
+                  size="lg"
                   icon="i-lucide-eye"
                   @click="openResourceStateConfirm('restore')"
                 >
@@ -2136,7 +2249,7 @@ const leaveManagePage = () => {
                   v-if="showManageUi && !isResourceDeleted"
                   color="error"
                   variant="outline"
-                  size="sm"
+                  size="lg"
                   icon="i-lucide-trash-2"
                   @click="openResourceStateConfirm('delete')"
                 >
@@ -2146,7 +2259,7 @@ const leaveManagePage = () => {
                   v-if="showManageUi"
                   color="neutral"
                   variant="ghost"
-                  size="sm"
+                  size="lg"
                   icon="i-lucide-arrow-left"
                   @click="leaveManagePage"
                 >
@@ -2425,39 +2538,116 @@ const leaveManagePage = () => {
                           v-model="versionForm.type"
                           :items="[
                             { label: t('resources.version_type_release'), value: 'release' },
-                            { label: t('resources.version_type_snapshot'), value: 'snapshot' }
+                            { label: t('resources.version_type_beta'), value: 'beta' },
+                            { label: t('resources.version_type_alpha'), value: 'alpha' }
                           ]"
                           label-key="label"
                           value-key="value"
                         />
                       </UFormField>
-                      <UFormField :label="t('resources.publish.size')">
-                        <UInput v-model="versionForm.size" />
-                      </UFormField>
-                      <UFormField :label="t('resources.publish.game_versions')">
-                        <UInput v-model="versionForm.gameVersionsRaw" />
-                      </UFormField>
-                      <UFormField :label="t('resources.publish.loaders')">
-                        <UInput v-model="versionForm.loadersRaw" />
-                      </UFormField>
-                      <UFormField :label="t('resources.publish.server_types')">
-                        <UInput v-model="versionForm.serverTypesRaw" />
-                      </UFormField>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                      <UFormField :label="t('resources.update_title')">
-                        <UInput v-model="versionForm.updateTitle" />
-                      </UFormField>
-                      <UFormField :label="t('resources.update_type')">
+                    <div
+                      v-if="versionFieldDefinitions.length"
+                      class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3"
+                    >
+                      <UFormField
+                        v-for="field in versionFieldDefinitions"
+                        :key="field.id"
+                        :label="field.title"
+                        :description="field.description"
+                        :required="field.required"
+                      >
+                        <UTextarea
+                          v-if="field.fieldType === 'textarea'"
+                          v-model="versionFieldFormValues[field.id] as string"
+                          :maxlength="Number(field.maxLength || 0) > 0 ? Number(field.maxLength) : undefined"
+                        />
                         <USelect
-                          v-model="versionForm.updateType"
-                          :items="[
-                            { label: t('resources.update_type_update'), value: 'update' },
-                            { label: t('resources.version_type_release'), value: 'release' },
-                            { label: t('resources.version_type_snapshot'), value: 'snapshot' }
-                          ]"
+                          v-else-if="field.fieldType === 'select'"
+                          v-model="versionFieldFormValues[field.id] as string"
+                          :items="fieldChoiceItems(field)"
                           label-key="label"
                           value-key="value"
+                        >
+                          <template #leading="{ modelValue }">
+                            <UAvatar
+                              v-if="getFieldChoiceItem(field, String(modelValue || ''))?.iconUrl"
+                              :src="getFieldChoiceItem(field, String(modelValue || ''))?.iconUrl"
+                              :alt="getFieldChoiceItem(field, String(modelValue || ''))?.label"
+                              size="2xs"
+                            />
+                          </template>
+                          <template #item-leading="{ item }">
+                            <UAvatar
+                              v-if="item.iconUrl"
+                              :src="item.iconUrl"
+                              :alt="item.label"
+                              size="2xs"
+                            />
+                          </template>
+                        </USelect>
+                        <URadioGroup
+                          v-else-if="field.fieldType === 'radio'"
+                          v-model="versionFieldFormValues[field.id] as string"
+                          :items="fieldChoiceItems(field)"
+                          value-key="value"
+                          orientation="horizontal"
+                        >
+                          <template #label="{ item }">
+                            <span class="inline-flex items-center gap-2">
+                              <UAvatar
+                                v-if="item.iconUrl"
+                                :src="item.iconUrl"
+                                :alt="item.label"
+                                size="2xs"
+                              />
+                              <span>{{ item.label }}</span>
+                            </span>
+                          </template>
+                        </URadioGroup>
+                        <div
+                          v-else-if="field.fieldType === 'checkbox'"
+                          class="grid gap-2"
+                        >
+                          <UCheckbox
+                            v-for="option in fieldChoiceItems(field)"
+                            :key="`${field.id}-${option.value}`"
+                            :model-value="isVersionFieldChoiceChecked(field.id, option.value)"
+                            @update:model-value="value => setVersionFieldChoiceChecked(field.id, option.value, !!value)"
+                          >
+                            <template #label>
+                              <span class="inline-flex items-center gap-2">
+                                <UAvatar
+                                  v-if="option.iconUrl"
+                                  :src="option.iconUrl"
+                                  :alt="option.label"
+                                  size="2xs"
+                                />
+                                <span>{{ option.label }}</span>
+                              </span>
+                            </template>
+                          </UCheckbox>
+                        </div>
+                        <USelectMenu
+                          v-else-if="field.fieldType === 'multiselect'"
+                          v-model="versionFieldFormValues[field.id] as string[]"
+                          :items="fieldChoiceItems(field)"
+                          value-key="value"
+                          multiple
+                        >
+                          <template #item-leading="{ item }">
+                            <UAvatar
+                              v-if="item.iconUrl"
+                              :src="item.iconUrl"
+                              :alt="item.label"
+                              size="2xs"
+                            />
+                          </template>
+                        </USelectMenu>
+                        <UInput
+                          v-else
+                          v-model="versionFieldFormValues[field.id] as string"
+                          :maxlength="Number(field.maxLength || 0) > 0 ? Number(field.maxLength) : undefined"
                         />
                       </UFormField>
                     </div>
@@ -2483,43 +2673,38 @@ const leaveManagePage = () => {
 
                   <UCard :ui="{ body: 'p-4' }">
                     <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                      <div class="md:col-span-4">
-                        <div class="text-xs text-muted mb-1">
-                          {{ t('resources.filter_game_version') }}
-                        </div>
-                        <USelect
-                          v-model="filterGameVersion"
-                          :items="availableGameVersions"
-                          :placeholder="t('resources.placeholder_supported_game_versions')"
-                        />
-                      </div>
-
                       <div
-                        v-if="isJavaMod"
+                        v-for="field in filterableVersionFieldDefinitions"
+                        :key="`filter-${field.id}`"
                         class="md:col-span-4"
                       >
                         <div class="text-xs text-muted mb-1">
-                          {{ t('resources.filter_mod_loader') }}
+                          {{ field.title }}
                         </div>
                         <USelect
-                          v-model="filterLoader"
-                          :items="availableLoaders"
-                          :placeholder="t('resources.placeholder_loader')"
-                        />
-                      </div>
-
-                      <div
-                        v-if="isJavaPlugin"
-                        class="md:col-span-4"
-                      >
-                        <div class="text-xs text-muted mb-1">
-                          {{ t('resources.filter_server_type') }}
-                        </div>
-                        <USelect
-                          v-model="filterServerType"
-                          :items="availableServers"
-                          :placeholder="t('resources.placeholder_server')"
-                        />
+                          v-model="selectedVersionFieldFilters[field.id]"
+                          :items="availableVersionFieldFilterItems[field.id] || []"
+                          :placeholder="field.description || field.title"
+                          label-key="label"
+                          value-key="value"
+                        >
+                          <template #leading="{ modelValue }">
+                            <UAvatar
+                              v-if="getFieldChoiceItem(field, String(modelValue || ''))?.iconUrl"
+                              :src="getFieldChoiceItem(field, String(modelValue || ''))?.iconUrl"
+                              :alt="getFieldChoiceItem(field, String(modelValue || ''))?.label"
+                              size="2xs"
+                            />
+                          </template>
+                          <template #item-leading="{ item }">
+                            <UAvatar
+                              v-if="item.iconUrl"
+                              :src="item.iconUrl"
+                              :alt="item.label"
+                              size="2xs"
+                            />
+                          </template>
+                        </USelect>
                       </div>
 
                       <div class="md:col-span-12">
@@ -2551,293 +2736,324 @@ const leaveManagePage = () => {
                       class="hidden"
                       @change="onPickedReplaceFile"
                     >
-                    <UCard
-                      v-for="v in filteredVersions"
-                      :id="`version-${v.id}`"
-                      :key="v.id"
-                    >
-                      <div class="flex flex-col md:flex-row md:items-center gap-4">
-                        <div class="flex-1 min-w-0">
-                          <div class="flex items-center gap-2">
-                            <div class="font-semibold truncate">
-                              {{ v.name }}
-                            </div>
-                            <UBadge
-                              :color="v.type === 'release' ? 'success' : 'warning'"
-                              variant="subtle"
-                            >
-                              {{ versionTypeLabel(v.type) }}
-                            </UBadge>
-                          </div>
-                          <div class="mt-1 text-xs text-muted flex flex-wrap gap-2">
-                            <span class="inline-flex items-center gap-1">
-                              <UIcon name="i-lucide-calendar" />
-                              {{ formatTime(v.date) }}
-                            </span>
-                            <span class="inline-flex items-center gap-1">
-                              <UIcon name="i-lucide-download" />
-                              {{ v.downloads }}
-                            </span>
-                            <span class="inline-flex items-center gap-1">
-                              <UIcon name="i-lucide-hard-drive" />
-                              {{ v.size }}
-                            </span>
-                          </div>
-                          <div class="mt-2 flex flex-wrap gap-2">
-                            <UBadge
-                              v-for="gv in v.gameVersions"
-                              :key="gv"
-                              color="neutral"
-                              variant="subtle"
-                            >
-                              {{ gv }}
-                            </UBadge>
-                            <UBadge
-                              v-for="l in (v.loaders || [])"
-                              :key="l"
-                              color="primary"
-                              variant="subtle"
-                            >
-                              {{ l }}
-                            </UBadge>
-                            <UBadge
-                              v-for="s in (v.serverTypes || [])"
-                              :key="s"
-                              color="primary"
-                              variant="subtle"
-                            >
-                              {{ s }}
-                            </UBadge>
+                    <UCard :ui="{ body: 'p-0' }">
+                      <div class="overflow-x-auto">
+                        <table class="min-w-full border-separate border-spacing-0">
+                          <thead class="bg-(--ui-bg-accented)/50">
+                            <tr class="text-left">
+                              <th class="px-4 py-3 text-xs font-semibold text-(--ui-text-toned) whitespace-nowrap border-b border-(--ui-border)">
+                                {{ t('resources.publish.version_name') }}
+                              </th>
+                              <th
+                                v-for="field in versionListFieldDefinitions"
+                                :key="`version-col-${field.id}`"
+                                class="px-4 py-3 text-xs font-semibold text-(--ui-text-toned) border-b border-(--ui-border) min-w-48"
+                              >
+                                {{ field.title }}
+                              </th>
+                              <th class="px-4 py-3 text-xs font-semibold text-(--ui-text-toned) whitespace-nowrap border-b border-(--ui-border)">
+                                {{ t('resources.version_published_at') }}
+                              </th>
+                              <th class="px-4 py-3 text-xs font-semibold text-(--ui-text-toned) whitespace-nowrap border-b border-(--ui-border)">
+                                {{ t('resources.stat_downloads') }}
+                              </th>
+                              <th class="px-4 py-3 border-b border-(--ui-border) whitespace-nowrap" />
+                            </tr>
+                          </thead>
+                          <tbody>
                             <template
-                              v-for="g in v.facets"
-                              :key="`${v.id}-${g.facetKey}`"
+                              v-for="v in filteredVersions"
+                              :key="v.id"
                             >
-                              <UBadge
-                                v-for="it in g.items"
-                                :key="`${v.id}-${g.facetKey}-${it.slug}`"
-                                color="neutral"
-                                variant="outline"
-                              >
-                                {{ g.facetName }}: {{ it.label }}
-                              </UBadge>
-                            </template>
-                          </div>
-                        </div>
-
-                        <div class="flex items-center gap-2">
-                          <UButton
-                            color="neutral"
-                            variant="outline"
-                            icon="i-lucide-link"
-                            :to="`/versions/${v.id}`"
-                          >
-                            {{ t('resources.open_version_permalink') }}
-                          </UButton>
-                          <UButton
-                            v-if="showManageUi"
-                            color="neutral"
-                            variant="outline"
-                            :loading="uploadingFile && uploadVersionId === v.id"
-                            @click="pickFileForVersion(v.id)"
-                          >
-                            {{ t('resources.upload_file') }}
-                          </UButton>
-                          <UButton
-                            color="neutral"
-                            variant="outline"
-                            icon="i-lucide-copy"
-                            :disabled="!v.hash"
-                            @click="v.hash && copyHash(v.hash)"
-                          >
-                            {{ t('resources.copy_hash') }}
-                          </UButton>
-                          <UButton
-                            color="primary"
-                            icon="i-lucide-download"
-                            :loading="downloadingVersionId === v.id"
-                            @click="downloadFile(v)"
-                          >
-                            {{ t('resources.download') }}
-                          </UButton>
-                          <UButton
-                            v-if="!showManageUi && auth.isLoggedIn.value"
-                            color="warning"
-                            variant="outline"
-                            icon="i-lucide-flag"
-                            @click="reportVersion(v.id)"
-                          >
-                            {{ t('resources.version_report') }}
-                          </UButton>
-                        </div>
-                      </div>
-
-                      <div
-                        v-if="(v.files || []).length"
-                        class="mt-4 space-y-2"
-                      >
-                        <div class="text-xs text-muted">
-                          {{ t('resources.version_files') }}
-                        </div>
-                        <div
-                          v-if="showManageUi"
-                          class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-(--ui-border) px-3 py-2"
-                        >
-                          <div class="flex items-center gap-3 text-xs text-muted">
-                            <label class="inline-flex items-center gap-1 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                :checked="selectedFilesCount(v.id) > 0 && selectedFilesCount(v.id) === getVersionFiles(v).length"
-                                @change="toggleAllVersionFiles(v, (($event.target as HTMLInputElement)?.checked))"
-                              >
-                              <span>{{ t('resources.select_all') }}</span>
-                            </label>
-                            <span>{{ t('resources.file_selected_count', { count: selectedFilesCount(v.id) }) }}</span>
-                            <span>{{ t('resources.file_drag_hint') }}</span>
-                          </div>
-                          <div class="flex items-center gap-2">
-                            <UButton
-                              size="xs"
-                              color="neutral"
-                              variant="outline"
-                              :disabled="uploadingFile || !(draftFileOrderByVersion[v.id]?.length)"
-                              @click="saveVersionFileOrder(v)"
-                            >
-                              {{ t('resources.save_order') }}
-                            </UButton>
-                            <UButton
-                              size="xs"
-                              color="neutral"
-                              variant="ghost"
-                              :disabled="uploadingFile || !(draftFileOrderByVersion[v.id]?.length)"
-                              @click="clearDraftOrder(v.id)"
-                            >
-                              {{ t('common.cancel') }}
-                            </UButton>
-                            <UButton
-                              size="xs"
-                              color="error"
-                              variant="outline"
-                              :loading="bulkDeletingVersionId === v.id"
-                              :disabled="uploadingFile || selectedFilesCount(v.id) === 0"
-                              @click="bulkDeleteVersionFiles(v.id)"
-                            >
-                              {{ t('resources.delete_selected') }}
-                            </UButton>
-                          </div>
-                        </div>
-                        <div class="flex flex-col gap-2">
-                          <div
-                            v-for="(f, _fileIdx) in getVersionFiles(v)"
-                            :key="f.id"
-                            class="flex items-center justify-between gap-2 border border-(--ui-border) rounded-md px-3 py-2"
-                            :class="showManageUi ? 'cursor-move' : ''"
-                            :draggable="showManageUi"
-                            @dragstart="onVersionFileDragStart(v.id, f.id)"
-                            @dragover="onVersionFileDragOver"
-                            @drop="onVersionFileDrop(v, f.id)"
-                          >
-                            <div class="min-w-0 flex items-center gap-2">
-                              <input
-                                v-if="showManageUi"
-                                type="checkbox"
-                                :checked="isVersionFileSelected(v.id, f.id)"
-                                @change="toggleVersionFileSelected(v.id, f.id, (($event.target as HTMLInputElement)?.checked))"
-                              >
-                              <div class="flex items-center gap-2 min-w-0">
-                                <div class="text-sm font-medium truncate">
-                                  {{ f.displayName || f.fileName }}
-                                </div>
-                                <UBadge
-                                  v-if="f.isPrimary"
-                                  color="primary"
-                                  variant="subtle"
-                                  size="xs"
+                              <tr class="align-top">
+                                <td class="px-4 py-4 border-b border-(--ui-border)">
+                                  <div class="flex items-start gap-3 min-w-0">
+                                    <div
+                                      class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+                                      :class="versionTypeMarkerClass(v.type)"
+                                    >
+                                      {{ versionTypeMarker(v.type) }}
+                                    </div>
+                                    <div class="min-w-0">
+                                      <div class="flex items-center gap-2">
+                                        <div class="font-semibold truncate">
+                                          {{ v.name }}
+                                        </div>
+                                      </div>
+                                      <div class="mt-2 flex flex-wrap gap-2">
+                                        <template
+                                          v-for="g in v.facets"
+                                          :key="`${v.id}-${g.facetKey}`"
+                                        >
+                                          <UBadge
+                                            v-for="it in g.items"
+                                            :key="`${v.id}-${g.facetKey}-${it.slug}`"
+                                            color="neutral"
+                                            variant="outline"
+                                          >
+                                            {{ g.facetName }}: {{ it.label }}
+                                          </UBadge>
+                                        </template>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td
+                                  v-for="field in versionListFieldDefinitions"
+                                  :key="`version-cell-${v.id}-${field.id}`"
+                                  class="px-4 py-4 border-b border-(--ui-border)"
                                 >
-                                  {{ t('resources.file_primary') }}
-                                </UBadge>
-                              </div>
-                              <div class="text-xs text-muted">
-                                {{ formatBytes(f.sizeBytes) }}
-                              </div>
-                            </div>
-                            <div class="flex items-center gap-2">
-                              <UButton
-                                size="xs"
-                                color="neutral"
-                                variant="outline"
-                                :loading="isFileActionLoading(v.id, f.id)"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
-                                @click="downloadVersionFile(v.id, f.id)"
-                              >
-                                {{ t('resources.download_file') }}
-                              </UButton>
-                              <UButton
-                                v-if="showManageUi && !f.isPrimary"
-                                size="xs"
-                                color="neutral"
-                                variant="outline"
-                                :loading="isFileActionLoading(v.id, f.id)"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
-                                @click="setPrimaryVersionFile(v.id, f.id)"
-                              >
-                                {{ t('resources.set_primary') }}
-                              </UButton>
-                              <UButton
-                                v-if="showManageUi"
-                                size="xs"
-                                color="neutral"
-                                variant="outline"
-                                :loading="isFileActionLoading(v.id, f.id)"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
-                                @click="renameVersionFile(v.id, f.id, f.displayName || f.fileName)"
-                              >
-                                {{ t('resources.rename_file') }}
-                              </UButton>
-                              <UButton
-                                v-if="showManageUi"
-                                size="xs"
-                                color="neutral"
-                                variant="outline"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id) || !canMoveVersionFile(v, f.id, 'up')"
-                                @click="moveVersionFile(v, f.id, 'up')"
-                              >
-                                {{ t('resources.move_up') }}
-                              </UButton>
-                              <UButton
-                                v-if="showManageUi"
-                                size="xs"
-                                color="neutral"
-                                variant="outline"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id) || !canMoveVersionFile(v, f.id, 'down')"
-                                @click="moveVersionFile(v, f.id, 'down')"
-                              >
-                                {{ t('resources.move_down') }}
-                              </UButton>
-                              <UButton
-                                v-if="showManageUi"
-                                size="xs"
-                                color="neutral"
-                                variant="outline"
-                                :loading="isFileActionLoading(v.id, f.id)"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
-                                @click="pickReplaceFile(v.id, f.id)"
-                              >
-                                {{ t('resources.replace_file') }}
-                              </UButton>
-                              <UButton
-                                v-if="showManageUi"
-                                size="xs"
-                                color="error"
-                                variant="outline"
-                                :loading="isFileActionLoading(v.id, f.id)"
-                                :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
-                                @click="deleteVersionFile(v.id, f.id)"
-                              >
-                                {{ t('common.delete') }}
-                              </UButton>
-                            </div>
-                          </div>
-                        </div>
+                                  <div class="flex flex-wrap gap-2">
+                                    <template
+                                      v-for="value in getVersionFieldValues(v, field)"
+                                      :key="`${v.id}-${field.id}-${value}`"
+                                    >
+                                      <UBadge
+                                        color="neutral"
+                                        variant="subtle"
+                                        class="inline-flex items-center gap-1"
+                                      >
+                                        <UAvatar
+                                          v-if="getFieldChoiceItem(field, value)?.iconUrl"
+                                          :src="getFieldChoiceItem(field, value)?.iconUrl"
+                                          :alt="getFieldChoiceItem(field, value)?.label || value"
+                                          size="3xs"
+                                        />
+                                        <span>{{ getFieldChoiceItem(field, value)?.label || value }}</span>
+                                      </UBadge>
+                                    </template>
+                                    <span
+                                      v-if="getVersionFieldValues(v, field).length === 0"
+                                      class="text-sm text-(--ui-text-muted)"
+                                    >
+                                      {{ t('common.noData') }}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td class="px-4 py-4 border-b border-(--ui-border) whitespace-nowrap">
+                                  <span class="text-sm text-(--ui-text)">{{ formatTime(v.date) }}</span>
+                                </td>
+                                <td class="px-4 py-4 border-b border-(--ui-border) whitespace-nowrap">
+                                  <span class="text-sm font-medium text-(--ui-text)">{{ v.downloads }}</span>
+                                </td>
+                                <td class="px-4 py-4 border-b border-(--ui-border)">
+                                  <div class="flex flex-wrap items-center gap-2">
+                                    <UButton
+                                      v-if="showManageUi"
+                                      size="sm"
+                                      color="neutral"
+                                      variant="outline"
+                                      :loading="uploadingFile && uploadVersionId === v.id"
+                                      @click="pickFileForVersion(v.id)"
+                                    >
+                                      {{ t('resources.upload_file') }}
+                                    </UButton>
+                                    <UButton
+                                      size="sm"
+                                      color="primary"
+                                      icon="i-lucide-download"
+                                      :loading="downloadingVersionId === v.id"
+                                      @click="downloadFile(v)"
+                                    >
+                                      {{ t('resources.download') }}
+                                    </UButton>
+                                    <UDropdownMenu
+                                      :items="getVersionMenuItems(v.id)"
+                                      :content="{ align: 'end' }"
+                                    >
+                                      <UButton
+                                        size="sm"
+                                        color="neutral"
+                                        variant="outline"
+                                        icon="i-lucide-ellipsis"
+                                      />
+                                    </UDropdownMenu>
+                                  </div>
+                                </td>
+                              </tr>
+                              <tr>
+                                <td
+                                  :colspan="versionListFieldDefinitions.length + 4"
+                                  class="px-4 py-4 border-b border-(--ui-border) bg-(--ui-bg-accented)/20"
+                                >
+                                  <div class="space-y-3">
+                                    <div class="text-xs font-medium text-(--ui-text-toned)">
+                                      {{ t('resources.version_files') }}
+                                    </div>
+                                    <div
+                                      v-if="showManageUi"
+                                      class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-(--ui-border) bg-(--ui-bg) px-3 py-2"
+                                    >
+                                      <div class="flex items-center gap-3 text-xs text-muted">
+                                        <label class="inline-flex items-center gap-1 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            :checked="selectedFilesCount(v.id) > 0 && selectedFilesCount(v.id) === getVersionFiles(v).length"
+                                            @change="toggleAllVersionFiles(v, (($event.target as HTMLInputElement)?.checked))"
+                                          >
+                                          <span>{{ t('resources.select_all') }}</span>
+                                        </label>
+                                        <span>{{ t('resources.file_selected_count', { count: selectedFilesCount(v.id) }) }}</span>
+                                        <span>{{ t('resources.file_drag_hint') }}</span>
+                                      </div>
+                                      <div class="flex flex-wrap items-center gap-2">
+                                        <UButton
+                                          size="xs"
+                                          color="neutral"
+                                          variant="outline"
+                                          :disabled="uploadingFile || !(draftFileOrderByVersion[v.id]?.length)"
+                                          @click="saveVersionFileOrder(v)"
+                                        >
+                                          {{ t('resources.save_order') }}
+                                        </UButton>
+                                        <UButton
+                                          size="xs"
+                                          color="neutral"
+                                          variant="ghost"
+                                          :disabled="uploadingFile || !(draftFileOrderByVersion[v.id]?.length)"
+                                          @click="clearDraftOrder(v.id)"
+                                        >
+                                          {{ t('common.cancel') }}
+                                        </UButton>
+                                        <UButton
+                                          size="xs"
+                                          color="error"
+                                          variant="outline"
+                                          :loading="bulkDeletingVersionId === v.id"
+                                          :disabled="uploadingFile || selectedFilesCount(v.id) === 0"
+                                          @click="bulkDeleteVersionFiles(v.id)"
+                                        >
+                                          {{ t('resources.delete_selected') }}
+                                        </UButton>
+                                      </div>
+                                    </div>
+                                    <div
+                                      v-if="(v.files || []).length"
+                                      class="flex flex-col gap-2"
+                                    >
+                                      <div
+                                        v-for="(f, _fileIdx) in getVersionFiles(v)"
+                                        :key="f.id"
+                                        class="flex flex-col gap-3 rounded-md border border-(--ui-border) bg-(--ui-bg) px-3 py-3 md:flex-row md:items-center md:justify-between"
+                                        :class="showManageUi ? 'cursor-move' : ''"
+                                        :draggable="showManageUi"
+                                        @dragstart="onVersionFileDragStart(v.id, f.id)"
+                                        @dragover="onVersionFileDragOver"
+                                        @drop="onVersionFileDrop(v, f.id)"
+                                      >
+                                        <div class="min-w-0 flex items-center gap-2">
+                                          <input
+                                            v-if="showManageUi"
+                                            type="checkbox"
+                                            :checked="isVersionFileSelected(v.id, f.id)"
+                                            @change="toggleVersionFileSelected(v.id, f.id, (($event.target as HTMLInputElement)?.checked))"
+                                          >
+                                          <div class="min-w-0">
+                                            <div class="flex items-center gap-2 min-w-0">
+                                              <div class="text-sm font-medium truncate">
+                                                {{ f.displayName || f.fileName }}
+                                              </div>
+                                              <UBadge
+                                                v-if="f.isPrimary"
+                                                color="primary"
+                                                variant="subtle"
+                                                size="xs"
+                                              >
+                                                {{ t('resources.file_primary') }}
+                                              </UBadge>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-2 md:justify-end">
+                                          <UButton
+                                            size="xs"
+                                            color="neutral"
+                                            variant="outline"
+                                            :loading="isFileActionLoading(v.id, f.id)"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
+                                            @click="downloadVersionFile(v.id, f.id)"
+                                          >
+                                            {{ t('resources.download_file') }}
+                                          </UButton>
+                                          <UButton
+                                            v-if="showManageUi && !f.isPrimary"
+                                            size="xs"
+                                            color="neutral"
+                                            variant="outline"
+                                            :loading="isFileActionLoading(v.id, f.id)"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
+                                            @click="setPrimaryVersionFile(v.id, f.id)"
+                                          >
+                                            {{ t('resources.set_primary') }}
+                                          </UButton>
+                                          <UButton
+                                            v-if="showManageUi"
+                                            size="xs"
+                                            color="neutral"
+                                            variant="outline"
+                                            :loading="isFileActionLoading(v.id, f.id)"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
+                                            @click="renameVersionFile(v.id, f.id, f.displayName || f.fileName)"
+                                          >
+                                            {{ t('resources.rename_file') }}
+                                          </UButton>
+                                          <UButton
+                                            v-if="showManageUi"
+                                            size="xs"
+                                            color="neutral"
+                                            variant="outline"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id) || !canMoveVersionFile(v, f.id, 'up')"
+                                            @click="moveVersionFile(v, f.id, 'up')"
+                                          >
+                                            {{ t('resources.move_up') }}
+                                          </UButton>
+                                          <UButton
+                                            v-if="showManageUi"
+                                            size="xs"
+                                            color="neutral"
+                                            variant="outline"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id) || !canMoveVersionFile(v, f.id, 'down')"
+                                            @click="moveVersionFile(v, f.id, 'down')"
+                                          >
+                                            {{ t('resources.move_down') }}
+                                          </UButton>
+                                          <UButton
+                                            v-if="showManageUi"
+                                            size="xs"
+                                            color="neutral"
+                                            variant="outline"
+                                            :loading="isFileActionLoading(v.id, f.id)"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
+                                            @click="pickReplaceFile(v.id, f.id)"
+                                          >
+                                            {{ t('resources.replace_file') }}
+                                          </UButton>
+                                          <UButton
+                                            v-if="showManageUi"
+                                            size="xs"
+                                            color="error"
+                                            variant="outline"
+                                            :loading="isFileActionLoading(v.id, f.id)"
+                                            :disabled="uploadingFile || isFileActionLoading(v.id, f.id)"
+                                            @click="deleteVersionFile(v.id, f.id)"
+                                          >
+                                            {{ t('common.delete') }}
+                                          </UButton>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div
+                                      v-else
+                                      class="rounded-md border border-dashed border-(--ui-border) bg-(--ui-bg) px-3 py-4 text-sm text-(--ui-text-muted)"
+                                    >
+                                      {{ t('resources.no_files_for_version') }}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
                       </div>
                     </UCard>
                   </div>
@@ -2853,9 +3069,6 @@ const leaveManagePage = () => {
                     {{ t('resources.publish_update') }}
                   </div>
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <UFormField :label="t('resources.update_title')">
-                      <UInput v-model="updateForm.title" />
-                    </UFormField>
                     <UFormField :label="t('resources.update_version')">
                       <UInput
                         v-model="updateForm.versionString"
@@ -2868,7 +3081,8 @@ const leaveManagePage = () => {
                         :items="[
                           { label: t('resources.update_type_update'), value: 'update' },
                           { label: t('resources.version_type_release'), value: 'release' },
-                          { label: t('resources.version_type_snapshot'), value: 'snapshot' }
+                          { label: t('resources.version_type_beta'), value: 'beta' },
+                          { label: t('resources.version_type_alpha'), value: 'alpha' }
                         ]"
                         label-key="label"
                         value-key="value"
@@ -3374,41 +3588,69 @@ const leaveManagePage = () => {
             </div>
             <div class="flex flex-col gap-3">
               <USelect
-                v-model="quickGameVersion"
-                :items="availableGameVersions"
-                :placeholder="t('resources.placeholder_pick_game_version')"
-              />
-
-              <USelect
-                v-if="isJavaMod"
-                v-model="quickLoader"
-                :items="availableLoaders"
-                :placeholder="t('resources.placeholder_pick_loader')"
-              />
-              <USelect
-                v-if="isJavaPlugin"
-                v-model="quickServerType"
-                :items="availableServers"
-                :placeholder="t('resources.placeholder_pick_server')"
-              />
+                v-for="field in filterableVersionFieldDefinitions"
+                :key="`quick-${field.id}`"
+                v-model="quickVersionFieldFilters[field.id]"
+                :items="availableVersionFieldFilterItems[field.id] || []"
+                :placeholder="field.description || field.title"
+                label-key="label"
+                value-key="value"
+              >
+                <template #leading="{ modelValue }">
+                  <UAvatar
+                    v-if="getFieldChoiceItem(field, String(modelValue || ''))?.iconUrl"
+                    :src="getFieldChoiceItem(field, String(modelValue || ''))?.iconUrl"
+                    :alt="getFieldChoiceItem(field, String(modelValue || ''))?.label"
+                    size="2xs"
+                  />
+                </template>
+                <template #item-leading="{ item }">
+                  <UAvatar
+                    v-if="item.iconUrl"
+                    :src="item.iconUrl"
+                    :alt="item.label"
+                    size="2xs"
+                  />
+                </template>
+              </USelect>
 
               <UCard
-                v-if="quickTargetVersion"
+                v-if="quickTargetVersion || bestDownloadVersion"
                 :ui="{ body: 'p-3' }"
               >
                 <div class="text-sm font-semibold">
-                  {{ quickTargetVersion.name }}
+                  {{ (quickTargetVersion || bestDownloadVersion)?.name }}
                 </div>
                 <div class="text-xs text-muted mt-1">
-                  {{ quickTargetVersion.size }} • {{ formatTime(quickTargetVersion.date) }}
+                  {{ (quickTargetVersion || bestDownloadVersion)?.size }} - {{ formatTime((quickTargetVersion || bestDownloadVersion)?.date || '') }}
+                </div>
+                <div
+                  v-if="quickTargetVersion"
+                  class="mt-2 flex flex-wrap gap-2"
+                >
+                  <UBadge
+                    v-for="item in getVersionFieldDisplayItems(quickTargetVersion)"
+                    :key="`quick-version-${item.key}`"
+                    color="neutral"
+                    variant="subtle"
+                    class="inline-flex items-center gap-1"
+                  >
+                    <UAvatar
+                      v-if="item.iconUrl"
+                      :src="item.iconUrl"
+                      :alt="item.label"
+                      size="3xs"
+                    />
+                    <span>{{ item.fieldTitle }}: {{ item.label }}</span>
+                  </UBadge>
                 </div>
               </UCard>
 
               <UButton
                 color="primary"
-                :disabled="!quickTargetVersion"
+                :disabled="!(quickTargetVersion || bestDownloadVersion)"
                 icon="i-lucide-download"
-                @click="quickTargetVersion && downloadFile(quickTargetVersion)"
+                @click="(quickTargetVersion || bestDownloadVersion) && downloadFile((quickTargetVersion || bestDownloadVersion)!)"
               >
                 {{ t('resources.download_this_version') }}
               </UButton>
@@ -3508,9 +3750,6 @@ const leaveManagePage = () => {
                     >
                       {{ t('resources.file_primary') }}
                     </UBadge>
-                  </div>
-                  <div class="text-xs text-muted">
-                    {{ formatBytes(f.sizeBytes) }}
                   </div>
                 </div>
                 <UButton
@@ -3623,9 +3862,6 @@ const leaveManagePage = () => {
       </template>
       <template #body>
         <div class="space-y-3">
-          <UFormField :label="t('resources.update_title')">
-            <UInput v-model="editUpdateForm.title" />
-          </UFormField>
           <UFormField :label="t('resources.update_version')">
             <UInput v-model="editUpdateForm.versionString" />
           </UFormField>
@@ -3635,7 +3871,8 @@ const leaveManagePage = () => {
               :items="[
                 { label: t('resources.update_type_update'), value: 'update' },
                 { label: t('resources.version_type_release'), value: 'release' },
-                { label: t('resources.version_type_snapshot'), value: 'snapshot' }
+                { label: t('resources.version_type_beta'), value: 'beta' },
+                { label: t('resources.version_type_alpha'), value: 'alpha' }
               ]"
               label-key="label"
               value-key="value"

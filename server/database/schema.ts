@@ -789,18 +789,22 @@ const sqliteResourceCategories = sqliteTable('resource_categories', {
 
 export const resourceCategories = isMysql ? mysqlResourceCategories : sqliteResourceCategories
 
+import type { ResourceFieldChoiceRecord } from '../utils/resourceFieldChoices'
+
 const mysqlResourceFields = mysqlTable('resource_fields', {
   id: varchar('id', { length: 25 }).primaryKey(),
   title: varchar('title', { length: 255 }).notNull(),
   description: varchar('description', { length: 1024 }).notNull().default(''),
   displayGroup: varchar('display_group', { length: 255 }).notNull().default('above_info'),
   displayOrder: int('display_order').notNull().default(1),
+  fieldScope: varchar('field_scope', { length: 25 }).notNull().default('resource'),
   fieldType: varchar('field_type', { length: 25 }).notNull().default('textbox'),
-  fieldChoices: json('field_choices').$type<Record<string, string>>().notNull(),
+  fieldChoices: json('field_choices').$type<ResourceFieldChoiceRecord>().notNull(),
   matchType: varchar('match_type', { length: 25 }).notNull().default('none'),
   matchParams: json('match_params').$type<Record<string, string>>().notNull(),
   required: boolean('required').notNull().default(false),
   maxLength: int('max_length').notNull().default(0),
+  versionFilterable: boolean('version_filterable').notNull().default(false),
   viewableResource: boolean('viewable_resource').notNull().default(true)
 })
 
@@ -810,12 +814,14 @@ const sqliteResourceFields = sqliteTable('resource_fields', {
   description: text('description').notNull().default(''),
   displayGroup: text('display_group').notNull().default('above_info'),
   displayOrder: integer('display_order', { mode: 'number' }).notNull().default(1),
+  fieldScope: text('field_scope').notNull().default('resource'),
   fieldType: text('field_type').notNull().default('textbox'),
-  fieldChoices: text('field_choices', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+  fieldChoices: text('field_choices', { mode: 'json' }).$type<ResourceFieldChoiceRecord>().notNull(),
   matchType: text('match_type').notNull().default('none'),
   matchParams: text('match_params', { mode: 'json' }).$type<Record<string, string>>().notNull(),
   required: integer('required', { mode: 'boolean' }).notNull().default(false),
   maxLength: integer('max_length', { mode: 'number' }).notNull().default(0),
+  versionFilterable: integer('version_filterable', { mode: 'boolean' }).notNull().default(false),
   viewableResource: integer('viewable_resource', { mode: 'boolean' }).notNull().default(true)
 })
 
@@ -886,3 +892,37 @@ const sqliteResourceFieldValues = sqliteTable(
 )
 
 export const resourceFieldValues = isMysql ? mysqlResourceFieldValues : sqliteResourceFieldValues
+
+const mysqlResourceVersionFieldValues = mysqlTable(
+  'resource_version_field_values',
+  {
+    resourceVersionId: int('resource_version_id')
+      .notNull()
+      .references(() => mysqlResourceVersions.id, { onDelete: 'cascade' }),
+    fieldId: varchar('field_id', { length: 25 })
+      .notNull()
+      .references(() => mysqlResourceFields.id, { onDelete: 'cascade' }),
+    fieldValue: mysqlText('field_value').notNull()
+  },
+  t => ({
+    pk: mysqlPrimaryKey({ columns: [t.resourceVersionId, t.fieldId] })
+  })
+)
+
+const sqliteResourceVersionFieldValues = sqliteTable(
+  'resource_version_field_values',
+  {
+    resourceVersionId: integer('resource_version_id', { mode: 'number' })
+      .notNull()
+      .references(() => sqliteResourceVersions.id, { onDelete: 'cascade' }),
+    fieldId: text('field_id')
+      .notNull()
+      .references(() => sqliteResourceFields.id, { onDelete: 'cascade' }),
+    fieldValue: text('field_value').notNull()
+  },
+  t => ({
+    pk: primaryKey({ columns: [t.resourceVersionId, t.fieldId] })
+  })
+)
+
+export const resourceVersionFieldValues = isMysql ? mysqlResourceVersionFieldValues : sqliteResourceVersionFieldValues

@@ -77,6 +77,7 @@ const logAction = ref<'all' | 'hide' | 'restore' | 'delete'>('all')
 const confirmOpen = ref(false)
 const pendingIntent = ref<'hide' | 'restore' | 'delete'>('hide')
 const pendingIds = ref<string[]>([])
+const deleteMode = ref<'soft' | 'hard'>('soft')
 const rollbackReason = ref('')
 const rollbacking = ref(false)
 const rollbackConfirmOpen = ref(false)
@@ -201,6 +202,7 @@ async function applyState(intent: 'hide' | 'restore' | 'delete', ids?: string[])
   if (targetIds.length === 0) return
   pendingIntent.value = intent
   pendingIds.value = targetIds
+  deleteMode.value = 'soft'
   confirmOpen.value = true
 }
 
@@ -213,8 +215,15 @@ const confirmTitle = computed(() => {
 const confirmDesc = computed(() => {
   if (pendingIntent.value === 'hide') return t('admin.resources_page.confirm_hide_desc', { count: pendingIds.value.length })
   if (pendingIntent.value === 'restore') return t('admin.resources_page.confirm_restore_desc', { count: pendingIds.value.length })
-  return t('admin.resources_page.confirm_delete_desc', { count: pendingIds.value.length })
+  return deleteMode.value === 'hard'
+    ? t('admin.resources_page.confirm_delete_hard_desc', { count: pendingIds.value.length })
+    : t('admin.resources_page.confirm_delete_soft_desc', { count: pendingIds.value.length })
 })
+
+const deleteModeItems = computed(() => [
+  { label: t('admin.resources_page.delete_mode_soft'), value: 'soft' as const },
+  { label: t('admin.resources_page.delete_mode_hard'), value: 'hard' as const }
+])
 
 async function confirmApplyState() {
   const targetIds = pendingIds.value
@@ -223,7 +232,12 @@ async function confirmApplyState() {
   try {
     await $fetch('/api/admin/resources/state.manage', {
       method: 'POST',
-      body: { ids: targetIds, intent: pendingIntent.value, reason: actionReason.value || undefined }
+      body: {
+        ids: targetIds,
+        intent: pendingIntent.value,
+        deleteMode: pendingIntent.value === 'delete' ? deleteMode.value : undefined,
+        reason: actionReason.value || undefined
+      }
     })
     selectedIds.value = []
     confirmOpen.value = false
@@ -524,6 +538,17 @@ async function confirmRollback() {
           </template>
           <div class="space-y-4">
             <div class="text-sm text-(--ui-text-muted)">{{ confirmDesc }}</div>
+            <UFormField
+              v-if="pendingIntent === 'delete'"
+              :label="t('admin.resources_page.delete_mode')"
+            >
+              <URadioGroup
+                v-model="deleteMode"
+                :items="deleteModeItems"
+                value-key="value"
+                orientation="vertical"
+              />
+            </UFormField>
             <div class="flex justify-end gap-2">
               <UButton color="neutral" variant="outline" @click="confirmOpen = false">{{ t('common.cancel') }}</UButton>
               <UButton color="primary" :loading="submitting" @click="confirmApplyState">{{ t('common.confirm') }}</UButton>
